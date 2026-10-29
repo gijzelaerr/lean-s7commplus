@@ -6,8 +6,9 @@ against whole replies, against replies split into 8-byte fragments, and in a V1
 SessionKey session with split replies. In the SessionKey pass both clients get key2
 instead of drawing it, so that the session key they derive from key2 and the emulator's
 challenge is the one the emulator holds. Each builds a real blob from the other random
-draws, but the emulator cannot decrypt a blob and checks only its key ids and flags;
-the blob itself is checked by the known-answer tests.
+draws and legitimates with a password, but the emulator cannot decrypt a blob, checks
+only its key ids and flags, and accepts any legitimation answer; the blob and the
+answer are checked by the known-answer tests.
 
 usage: run.py
 """
@@ -27,10 +28,11 @@ CLI = ROOT / ".lake" / "build" / "bin" / ("lean-s7commplus-cli.exe" if os.name =
 
 
 KEYED = False
+PASSWORD = "secret"
 
 
 def cli(port: int, *args: str) -> subprocess.CompletedProcess[str]:
-    prefix = ["--test-key2", KEY2.hex()] if KEYED else []
+    prefix = ["--test-key2", KEY2.hex(), "--password", PASSWORD] if KEYED else []
     return subprocess.run(
         [str(CLI), *prefix, "127.0.0.1", str(port), *args], capture_output=True, text=True, timeout=60, check=False
     )
@@ -87,7 +89,7 @@ def run_checks(max_response_pdu: int | None, sessionkey: bool = False) -> None:
 
         # Differential: the Python client sees the same data the Lean client wrote.
         client = Client()
-        client.connect("127.0.0.1", port=port)
+        client.connect("127.0.0.1", port=port, password=PASSWORD if sessionkey else None)
         if sessionkey:
             expect(client._connection._session_key == SESSION_KEY, "Python client runs a SessionKey session")
         try:

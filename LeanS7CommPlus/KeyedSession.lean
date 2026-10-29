@@ -20,10 +20,12 @@ namespace LeanS7CommPlus
 
 open LeanS7
 
-/-- The fill bytes after a keyed request's IntegrityId: three for the activation, four
-    for the other requests. -/
+/-- The fill bytes after a keyed request's IntegrityId: three for the activation and the
+    S7-1200 legitimation requests, four for the other requests. -/
 def Request.integrityTail : Request → Nat
   | .activate => 3
+  | .getVarSubstreamedV1 _ => 3
+  | .legitimate _ => 3
   | _ => 4
 
 /-- The session key and the IntegrityId counters of a keyed session. -/

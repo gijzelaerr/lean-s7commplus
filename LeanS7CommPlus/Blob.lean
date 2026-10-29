@@ -209,6 +209,30 @@ def advanceCounter (counter : Nat) : Nat :=
 def xorBytes (a b : ByteArray) : ByteArray :=
   ((a.toList.zip b.toList).map fun (x, y) => x ^^^ y).toByteArray
 
+/-- The GCM-like part of the authenticator: the IV, the encrypted challenge (bytes 2 to
+    17) and the full 16-byte blocks of key2; then, separately, key2's leftover bytes and
+    the encrypted checksum. -/
+def encryptChallengeAndKey2 (challengeKey checksumKey : ByteArray) (hashKey : Nat)
+    (iv challenge key2 : ByteArray) : ByteArray × ByteArray := Id.run do
+  let aes (counter : Nat) := Aes.encryptBlock challengeKey (natLe 16 counter)
+  let fold (checksum : Nat) (block : ByteArray) := Checksum.multiply (checksum ^^^ leNat block) hashKey
+  let mut counter := leNat (iv.extract 0 16)
+  let mut checksum := Checksum.multiply counter hashKey
+  let challengeBlock := xorBytes (aes counter) (challenge.extract 2 18)
+  let mut full := iv.extract 0 16 ++ challengeBlock
+  counter := advanceCounter counter
+  checksum := fold checksum challengeBlock
+  for i in [0:key2.size / 16] do
+    let block := xorBytes (aes counter) (key2.extract (16 * i) (16 * i + 16))
+    full := full ++ block
+    counter := advanceCounter counter
+    checksum := fold checksum block
+  let leftoverLength := key2.size % 16
+  let leftover := xorBytes ((aes counter).extract 0 leftoverLength) (key2.extract (key2.size - leftoverLength) key2.size)
+  checksum := fold checksum (leftover ++ natLe (16 - leftoverLength) 0)
+  let final := Checksum.multiply (checksum ^^^ (16 + key2.size) * 2 ^ 96) hashKey
+  return (full, leftover ++ Aes.encryptBlock checksumKey (natLe 16 final))
+
 /-- The 180-byte blob and the session key, from the controller's public key and
     challenge and the five random draws: key1 and key2 (24 bytes), the IV (16), and the
     seed's blinding bytes and ladder input (20 each). `none` in the negligible case that
@@ -218,22 +242,7 @@ def buildRealPlcBlob (family : KeyFamily) (publicKey challenge key1 key2 iv blin
   let preSeed := Seed.preSeed key1
   let seed ← Seed.write publicKey preSeed blinding prng2
   let (challengeKey, checksumKey, hashKey) := Seed.deriveKeys preSeed
-  let aes (counter : Nat) := Aes.encryptBlock challengeKey (natLe 16 counter)
-  let fold (checksum : Nat) (block : ByteArray) := Checksum.multiply (checksum ^^^ leNat block) hashKey
-  let counter := leNat iv
-  let checksum := Checksum.multiply counter hashKey
-  let challengeBlock := xorBytes (aes counter) (challenge.extract 2 18)
-  let counter := advanceCounter counter
-  let checksum := fold checksum challengeBlock
-  let key2Block := xorBytes (aes counter) (key2.extract 0 16)
-  let counter := advanceCounter counter
-  let checksum := fold checksum key2Block
-  let leftover := xorBytes ((aes counter).extract 0 8) (key2.extract 16 24)
-  let checksum := fold checksum (leftover ++ natLe 8 0)
-  let final := Checksum.multiply (checksum ^^^ 40 * 2 ^ 96) hashKey
-  let encryptedChecksum := Aes.encryptBlock checksumKey (natLe 16 final)
-  let blob := blobMetadata family publicKey key2 ++ seed ++ iv.extract 0 16 ++ challengeBlock ++ key2Block ++
-    leftover ++ encryptedChecksum
-  pure (blob, deriveSessionKey key2 challenge)
+  let (full, final) := encryptChallengeAndKey2 challengeKey checksumKey hashKey iv challenge (key2.extract 0 24)
+  pure (blobMetadata family publicKey key2 ++ seed ++ full ++ final, deriveSessionKey key2 challenge)
 
 end LeanS7CommPlus

@@ -5,6 +5,7 @@ import LeanS7CommPlus.Fragments
 import LeanS7CommPlus.KeyedSession
 import LeanS7CommPlus.KeyDerivation
 import LeanS7CommPlus.Blob
+import LeanS7CommPlus.Legitimation
 
 /-!
 # A plain V1 client
@@ -153,15 +154,43 @@ partial def drawBlob (family : KeyFamily) (publicKey challenge : ByteArray) (key
   | some result => pure result
   | none => drawBlob family publicKey challenge key2?
 
+/-- Draw the legitimation's randomness and build the answer; drawn again in the
+    negligible case that the ladder input gives the point at infinity. -/
+partial def drawLegitimationAnswer (family : KeyFamily) (publicKey sessionKey : ByteArray) (password : String)
+    (challenge : ByteArray) : IO ByteArray := do
+  let iv ← IO.getRandomBytes 16
+  let blinding ← IO.getRandomBytes 20
+  let prng2 ← IO.getRandomBytes 20
+  match legitimationAnswer family publicKey sessionKey password challenge iv blinding prng2 with
+  | some answer => pure answer
+  | none => drawLegitimationAnswer family publicKey sessionKey password challenge
+
+/-- Legitimate a keyed session with a password: read a fresh challenge from address
+    303, write the answer to address 1846, and fail if the controller refuses it. -/
+def Client.legitimate (client : Client) (family : KeyFamily) (publicKey sessionKey : ByteArray)
+    (password : String) : IO Client := do
+  let read : Request := if family = .s71200 then .getVarSubstreamedV1 AttributeId.serverSessionRequest
+    else .getVarSubstreamed AttributeId.serverSessionRequest
+  let (client, payload) ← client.step read
+  let challenge ← orFail "legitimation challenge" (decodeLegitimationChallenge payload)
+  if challenge.size ≠ 20 then
+    throw <| IO.userError s!"legitimation challenge of {challenge.size} bytes, expected 20"
+  let answer ← drawLegitimationAnswer family publicKey sessionKey password challenge
+  let (client, reply) ← client.step (.legitimate answer)
+  if legitimationRefused reply then
+    throw <| IO.userError "the controller refused the legitimation (wrong password?)"
+  pure client
+
 /-- Open a V1 SessionKey session (S7-1200 FW < V4.5, S7-1500 FW 2.6–2.9, families 00
     and 01): build the blob and derive the session key, then the SessionKey setup, the
-    activation and the protection-level read, then V3 frames throughout.
+    activation, the legitimation when a password is given, and the protection-level
+    read, then V3 frames throughout.
 
     With `testKey2`, key2 is the given value instead of drawn. That is for the emulator,
     which holds a configured session key: the session key must be the one derived from
     a key2 the emulator knows. Every other draw is random either way. -/
 def Client.connectSessionKey (host : String) (port : UInt16) (testKey2 : Option ByteArray := none)
-    (timeoutMs : Option Nat := some 5000) : IO Client := do
+    (password : Option String := none) (timeoutMs : Option Nat := some 5000) : IO Client := do
   let (client, reply) ← Client.create host port timeoutMs
   let some challenge := reply.challenge
     | throw <| IO.userError "the controller sends no session challenge"
@@ -181,6 +210,9 @@ def Client.connectSessionKey (host : String) (port : UInt16) (testKey2 : Option 
   Client.checkSetupReply setupReply
   let client := { client with keyed := some (Keyed.install sessionKey) }
   let (client, _) ← client.step .activate
+  let client ← match password with
+    | some password => client.legitimate family publicKey sessionKey password
+    | none => pure client
   let client := { client with keyed := client.keyed.map (Keyed.skipAfterLegitimation · family) }
   let (client, _) ← client.step (.getVarSubstreamed AttributeId.effectiveProtectionLevel)
   pure client
