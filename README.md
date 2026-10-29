@@ -67,6 +67,13 @@ Implemented and proved so far:
   encoding of its fragments. `reassemble_bound`: at most `maxFragments` (4096)
   fragments and 65535 bytes per fragment. `reassemble_splitData`: reassembly undoes the
   emulator's split.
+- **V3 frames over an abstract MAC** (`LeanS7CommPlus.Integrity`): the HMAC envelope of
+  SessionKey sessions, for single frames and for fragmented responses whose tags form
+  a chain (`ChainedMac`, with the independent and PLCSIM feed-forward dialects as
+  instances). `openV3_sealV3` and `openFragments_sealFragments`: round trips.
+  `sealV3_of_openV3` and `openFragments_sound`: an accepted frame or response is
+  exactly the seal of the data it yields. HMAC-SHA256 itself is not implemented
+  (decision 3).
 
 Every frame of a real CPU 1214C V4.2.2 session (`fixtures/`) decodes and
 re-encodes byte for byte, and the VLQ encoders match the Python reference on

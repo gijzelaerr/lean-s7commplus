@@ -526,6 +526,48 @@ def testFragments : IO Unit := do
     | .ok frame, .ok message => check (frame == message) s!"{label}: frame and reassembly agree"
     | _, _ => throw <| IO.userError s!"{label}: frame or reassembly rejected"
 
+/-- A toy MAC for the framing tests: a 64-bit polynomial hash spread over 32 bytes.
+    It is order-sensitive but not secure; the real MAC is HMAC-SHA256 (decision 3). -/
+def toyMac : Mac where
+  tag message :=
+    let hash := message.foldl (fun (acc : UInt64) byte => acc * 1099511628211 + byte.toUInt64) 14695981039346656037
+    ((List.range 32).map fun i => (hash >>> (UInt64.ofNat ((i % 8) * 8))).toUInt8 + UInt8.ofNat i).toByteArray
+  tag_size message := by simp
+
+def flipByte (data : ByteArray) (position : Nat) : ByteArray :=
+  data.set! position (data.get! position ^^^ 0x01)
+
+def testIntegrity : IO Unit := do
+  let message := hexBytes "31000004f2000000050000000134000000"
+  let sealed := sealV3 toyMac message
+  check (match openV3 toyMac sealed with | .ok m => m == message | .error _ => false) "V3 round trip"
+  check (sealed.extract 0 2 == bytes #[0x72, 0x03] && sealed[4]! == 0x20) "V3 frame and envelope header"
+  -- Any changed byte of the digest or message is refused.
+  for position in [5, 20, 36, 37, 40, sealed.size - 5] do
+    check (openV3 toyMac (flipByte sealed position)).toBool.not s!"V3 frame with byte {position} changed refused"
+  check (openV3 toyMac (encodeFrame .v1 (encodeIntegrityEnvelope (toyMac.tag message) message))).toBool.not
+    "V1 frame refused"
+  -- Fragmented responses under both chains.
+  let pieces := splitData 8 ((List.range 20).map UInt8.ofNat |>.toByteArray)
+  let whole := joinFragments pieces
+  for (label, sealedPieces, opened, reordered) in [
+      ("independent", sealFragments (.independent toyMac) pieces,
+        openFragments (.independent toyMac), sealFragments (.independent toyMac) pieces.reverse),
+      ("feed-forward", sealFragments (.feedForward toyMac) pieces,
+        openFragments (.feedForward toyMac), sealFragments (.feedForward toyMac) pieces.reverse)] do
+    check (match opened sealedPieces with | .ok d => d == whole | .error _ => false) s!"{label}: round trip"
+    check (opened (flipByte sealedPieces 50)).toBool.not s!"{label}: changed fragment refused"
+    check (match opened reordered with | .ok d => d != whole | .error _ => true) s!"{label}: reordering changes the data"
+  -- Under feed-forward, a fragment taken out of its chain is refused.
+  let ffSealed := sealFragments (.feedForward toyMac) pieces
+  match decodeFragments ffSealed with
+  | .ok (_, envelopes) =>
+    let spliced := encodeFragments .v3 [envelopes[0]!, envelopes[2]!]
+    check (openFragments (.feedForward toyMac) spliced).toBool.not "feed-forward: dropped fragment refused"
+    let swapped := encodeFragments .v3 [envelopes[0]!, envelopes[2]!, envelopes[1]!]
+    check (openFragments (.feedForward toyMac) swapped).toBool.not "feed-forward: swapped fragments refused"
+  | .error _ => throw <| IO.userError "feed-forward fragments rejected"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -547,4 +589,5 @@ def main : IO Unit := do
   testSessionRequests
   testFrameRejections
   testFragments
+  testIntegrity
   IO.println "All lean-s7commplus tests passed."

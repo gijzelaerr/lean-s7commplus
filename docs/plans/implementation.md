@@ -1,9 +1,32 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–4 done on 2026-10-29; phase 5 in progress (fragment reassembly done). Phase 2 does not yet cover VLQ arrays, packed
+Status: phases 0–4 done on 2026-10-29; phase 5 in progress (fragment reassembly and V3 framing over an abstract MAC done). Phase 2 does not yet cover VLQ arrays, packed
 structs or the EXPLORE elements; phase 3 covers reads and writes of DB regions. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 5b results (V3 framing over an abstract MAC)
+
+- **Single frames** (`LeanS7CommPlus.Integrity`): `sealV3` puts a message in a V3 frame
+  behind the envelope `0x20 ‖ tag ‖ message`; `openV3` checks the frame version, the
+  envelope and the tag. `Mac` is any function to 32-byte tags; on the wire it is
+  HMAC-SHA256 under the first 24 bytes of the session key.
+- **Fragmented responses.** `ChainedMac` is a state machine that gives each fragment its
+  tag. Two of the Python client's dialects are instances over a plain MAC:
+  `ChainedMac.independent` (each fragment tagged on its own) and
+  `ChainedMac.feedForward` (PLCSIM: `HMAC(key, tag₍ₙ₋₁₎ ‖ fragmentₙ)`). Both reduce to
+  `sealV3` for a single fragment.
+- **Theorems.** Round trips `openV3_sealV3` and `openFragments_sealFragments`.
+  Soundness `sealV3_of_openV3` and `openFragments_sound`: an accepted frame or
+  response is exactly the seal of the data it yields, so it carries the MAC tags of
+  that data. They follow from the canonical theorems for frames, fragments and the
+  envelope.
+- **Tests** use an order-sensitive toy MAC: changed bytes, a V1 frame, and dropped or
+  swapped feed-forward fragments are refused.
+- **Blocked on decision 3.** HMAC-SHA256 itself (and so known-answer checks against
+  `hashlib` and a live V3 session), and the state-resume dialect of real S7-1200/1500
+  firmware, which continues finalized SHA-256 states and so needs SHA-256 internals.
+  It fits `ChainedMac` with the two SHA-256 states as σ.
 
 ## Phase 5a results (fragment reassembly)
 
