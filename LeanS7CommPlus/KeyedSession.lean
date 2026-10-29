@@ -66,6 +66,35 @@ def Keyed.skipAfterLegitimation (keyed : Keyed) (family : KeyFamily) : Keyed :=
 def Keyed.openReply (keyed : Keyed) (reply : ByteArray) : Except OpenError ByteArray :=
   openFragments (.stateResume keyed.sessionKey) reply
 
+/-! ## Key renewal
+
+A SessionKey expires, so the client renews it: it reads a fresh challenge, builds a new
+SecurityKey, and writes it with SetVariable to address 1830, all under the old key.
+The new key is installed only once the reply opens under the old key and accepts the
+write; otherwise the session is closed. s7commplus renews every 25 minutes. -/
+
+/-- A SetVariable reply message accepts the write: it carries the SetVariable function
+    (not the generic error), and after its leading IntegrityId, the low 16 bits of the
+    return value have no sign bit (s7commplus `_check_set_variable_response`). -/
+def setVariableAccepted (message : ByteArray) : Bool :=
+  match decodeResponseHeader { data := message } with
+  | .error _ => false
+  | .ok (header, _) =>
+    header.function == FunctionCode.setVariable &&
+      match decodeLeadingIntegrityId (message.extract 10 message.size) with
+      | .error _ => false
+      | .ok (_, payload) =>
+        match Vlq.decodeUInt64 { data := payload } with
+        | .ok (returnValue, _) => returnValue &&& 0x8000 == 0
+        | .error _ => false
+
+/-- Finish a renewal with the reply to the SecurityKey write: the session with the new
+    key, or `none` when the session must be closed. -/
+def Keyed.finishRenewal (keyed : Keyed) (newKey reply : ByteArray) : Option Keyed :=
+  match keyed.openReply reply with
+  | .error _ => none
+  | .ok message => if setVariableAccepted message then some { keyed with sessionKey := newKey } else none
+
 /-! ## Properties -/
 
 /-- What a keyed send puts on the wire: the request message, with the IntegrityId the
@@ -111,6 +140,28 @@ theorem Session.sendKeyed_counter (session : Session) (keyed : Keyed) (request :
   refine ⟨fun hr => ?_, fun hw => ?_⟩
   · rw [hcounters, keyed.counters.next_read _ hr]
   · rw [hcounters, keyed.counters.next_write _ hw]
+
+/-- The new key is installed only after the renewal reply opens under the old key and
+    accepts the write; the IntegrityId counters carry on. -/
+theorem Keyed.finishRenewal_spec (keyed keyed' : Keyed) (newKey reply : ByteArray)
+    (h : keyed.finishRenewal newKey reply = some keyed') :
+    ∃ message, keyed.openReply reply = .ok message ∧ setVariableAccepted message = true ∧
+      keyed'.sessionKey = newKey ∧ keyed'.counters = keyed.counters := by
+  unfold Keyed.finishRenewal at h
+  split at h
+  · contradiction
+  · rename_i message hopen
+    split at h
+    · rename_i haccepted
+      injection h with h
+      subst h
+      exact ⟨message, hopen, haccepted, rfl, rfl⟩
+    · contradiction
+
+/-- A reply that does not open under the old key never installs a key. -/
+theorem Keyed.finishRenewal_unopened (keyed : Keyed) (newKey reply : ByteArray) (error : OpenError)
+    (h : keyed.openReply reply = .error error) : keyed.finishRenewal newKey reply = none := by
+  simp [Keyed.finishRenewal, h]
 
 /-- A keyed reply is accepted only if it is exactly the state-resume sealing of the
     message it yields. -/

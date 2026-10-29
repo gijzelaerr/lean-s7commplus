@@ -157,6 +157,12 @@ def legitimatePayload (objectId : UInt32) (sequence : UInt16) (answer : ByteArra
     encodeObjectQualifier .fixed sequence.toUInt32 ++ Vlq.encodeUInt32 1 ++ bytes #[0x00, 0x14, 0x00] ++
     Vlq.encodeUInt32 (UInt32.ofNat answer.size) ++ answer ++ Vlq.encodeUInt32 sequence.toUInt32 ++ bytes #[0, 0, 0]
 
+/-- SetVariable of an encoded value to an address of an object, with the VLQ object
+    qualifier, a zero byte and four fill bytes (s7commplus `_build_set_variable_payload`). -/
+def setVariablePayload (objectId address : UInt32) (value : ByteArray) : ByteArray :=
+  uint32BE objectId ++ Vlq.encodeUInt32 1 ++ Vlq.encodeUInt32 address ++ value ++
+    encodeObjectQualifier .vlq 0 ++ bytes #[0x00] ++ uint32BE 0
+
 /-! ## CreateObject reply -/
 
 /-- The bytes of the last value of an attribute in a decoded tree: a value, or a
@@ -259,6 +265,8 @@ inductive Request where
   | getVarSubstreamedV1 (address : UInt32)
   /-- SetVarSubstreamed of the legitimation answer. -/
   | legitimate (answer : ByteArray)
+  /-- SetVariable of a new encoded SecurityKey to address 1830: the key renewal. -/
+  | renewSessionKey (securityKey : ByteArray)
 
 def Request.function : Request → UInt16
   | .initSsl => FunctionCode.initSsl
@@ -272,6 +280,7 @@ def Request.function : Request → UInt16
   | .getVarSubstreamed _ => FunctionCode.getVarSubstreamed
   | .getVarSubstreamedV1 _ => FunctionCode.getVarSubstreamed
   | .legitimate _ => FunctionCode.setVarSubstreamed
+  | .renewSessionKey _ => FunctionCode.setVariable
 
 /-- The phase a request may be sent in. -/
 def Request.phase : Request → Phase
@@ -305,6 +314,8 @@ def Request.payload (session : Session) : Request → ByteArray
   | .getVarSubstreamed address => getVarSubstreamedPayload session.sessionId address
   | .getVarSubstreamedV1 address => getVarSubstreamedV1Payload session.sessionId address session.sequence
   | .legitimate answer => legitimatePayload session.sessionId session.sequence answer
+  | .renewSessionKey securityKey =>
+    setVariablePayload session.sessionId AttributeId.sessionSetupLegitimation securityKey
 
 /-- Send `request`: the frame to put on the wire and the session after it, or `none`
     when the request is not allowed in the session's phase. -/

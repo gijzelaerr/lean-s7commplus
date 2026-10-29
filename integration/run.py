@@ -31,10 +31,10 @@ KEYED = False
 PASSWORD = "secret"
 
 
-def cli(port: int, *args: str) -> subprocess.CompletedProcess[str]:
+def cli(port: int, *args: str, flags: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
     prefix = ["--test-key2", KEY2.hex(), "--password", PASSWORD] if KEYED else []
     return subprocess.run(
-        [str(CLI), *prefix, "127.0.0.1", str(port), *args], capture_output=True, text=True, timeout=60, check=False
+        [str(CLI), *prefix, *flags, "127.0.0.1", str(port), *args], capture_output=True, text=True, timeout=60, check=False
     )
 
 
@@ -83,6 +83,15 @@ def run_checks(max_response_pdu: int | None, sessionkey: bool = False) -> None:
 
         browse = cli(port, "browse")
         expect(browse.returncode == 0 and browse.stdout.split("\n")[:2] == ["1 DB1", "7 DB7"], f"browse: {browse.stdout!r}")
+
+        if sessionkey:
+            # The emulator answers the renewal's SecurityKey write with a generic error
+            # frame; the Lean client refuses it, keeps the old key and closes.
+            renewed = cli(port, "read", "1", "0", "4", flags=("--renew",))
+            expect(
+                renewed.returncode != 0 and "did not accept the renewed SessionKey" in renewed.stderr,
+                f"renewal against the emulator is refused: {renewed.stderr.strip()!r}",
+            )
 
         missing = cli(port, "read", "99", "0", "1")
         expect(missing.returncode != 0, f"read of a missing DB fails: {missing.stderr.strip()!r}")

@@ -1055,6 +1055,57 @@ def testLegitimation : IO Unit := do
     check (legitimationRefused (natLe 9 0) == false) "zero return value accepted"
     check (legitimationRefused (hexBytes "ffffffffffffffffff") == true) "negative return value refused"
 
+/-- An s7commplus SessionKey renewal against the emulator (`integration/sessionkey_emulator.py`)
+    with key2 given and the other draws recorded: the challenge read and its reply, the
+    SecurityKey write and the emulator's reply, a generic error frame. -/
+def renewalFrames : List String := [
+  "72030056206c6c6f5c765134cdcb18f39b884ae59aa22c9a7a1e25df66a119f7f33bff180e310000058600000005000000013400000001200401822f000004e88969001200000000896a001300896b000400000005010200000072030000",
+  "72030045201154e66093f56da8f80a6113f2a963da7950edd1880b2bcbd3f34780a6b37b07320000058600000005000000100214000102030405060708090a0b0c0d0e0f101112130172030000",
+  "7203016220d3f8d0afe61de7abccd66bbfe3d03a297a1f655626817a6de46b0e54d13a5c9231000004f200000006000000013400000001018e260017000007088e090004008e0a0002008e0b0017000007218e220005ded0cdb0c8fc90f31a8e23000482108e24000400008e0c0017000007218e220005f0baaebcac9db791ab8e2300048482018e24000400008e0d0014008134addee1feb40000000100000001000000134b030d49a98ea401010000000000001a73081f096b42bd10010000000000004c42d117f903374014b285794c71def4c7e31916c9a1e9c8c4a553f708254e815d3087cb46d8fd9b5566778899aabbccddeeff1021324354657687985060708090a0b0c0d0e0f00010203040ca5341c7a11fc3fe90b6483a69443a816d0bc438c9698011d98e822cb3c39878a4bfe4388d0f221054bedd3754e546cb243a6c5318df89b700000004e88969001200000000896a001300896b0004000000020000000072030000",
+  "7203003220904cd539bf1d54f72150916715a0a08fe8f02187fa0e12f47d9bcf3dc83e2e5232000004b100000006000189310000000072030000"]
+
+/-- The draws of that session: key1, IV, blinding, ladder input for the setup blob, then
+    the same four for the renewal blob. -/
+def renewalDraws : List String := ["37424d58636e79848f9aa5b0bbc6d1dce7f2fd08131e2934", "3c4854606c7884909ca8b4c0ccd8e4f0", "414e5b6875828f9ca9b6c3d0ddeaf704111e2b38", "465462707e8c9aa8b6c4d2e0eefc0a1826344250", "4b5a69788796a5b4c3d2e1f0ff0e1d2c3b4a5968778695a4", "5060708090a0b0c0d0e0f00010203040", "5566778899aabbccddeeff102132435465768798", "5a6c7e90a2b4c6d8eafc0e20324456687a8c9eb0"]
+
+def testRenewal : IO Unit := do
+  let frame (i : Nat) := hexBytes renewalFrames[i]!
+  let draw (i : Nat) := hexBytes renewalDraws[i]!
+  let key2 := seqBytes 24 1 100
+  let challenge := seqBytes 20 1 0
+  let some publicKey := publicKey? "01:BD426B091F08731A" | throw <| IO.userError "public key"
+  let oldKey := deriveSessionKey key2 challenge
+  let keyed : Keyed := { sessionKey := oldKey, counters := { read := 2, write := 2 } }
+  let session : Session := { phase := .ready, sessionId := 1, sequence := 5 }
+  let some (challengeRead, _, session, keyed) := session.sendKeyed keyed (.getVarSubstreamedV1 303)
+    | throw <| IO.userError "challenge read"
+  check (challengeRead == frame 0) "renewal challenge read frame"
+  let some renewalChallenge := (do
+      let message ← (keyed.openReply (frame 1)).toOption
+      (decodeLegitimationChallenge (message.extract 10 message.size)).toOption)
+    | throw <| IO.userError "renewal challenge"
+  let some (blob, newKey) := buildRealPlcBlob .s71200 publicKey renewalChallenge (draw 4) key2 (draw 5) (draw 6) (draw 7)
+    | throw <| IO.userError "renewal blob"
+  let securityKey := SecurityKey.ofKeys .s71200 publicKey newKey blob
+  let some (renewalFrame, _, _, keyed) := session.sendKeyed keyed (.renewSessionKey securityKey.encode)
+    | throw <| IO.userError "renewal frame"
+  check (renewalFrame == frame 2) "renewal SecurityKey write frame"
+  check (keyed.counters == { read := 3, write := 3 }) "counters carry on through the renewal"
+  -- The emulator answers SetVariable with the generic error frame; s7commplus accepts it
+  -- as a renewal, the Lean client does not.
+  check ((keyed.openReply (frame 3)).toBool) "the error reply opens under the old key"
+  check (keyed.finishRenewal newKey (frame 3)).isNone "a generic error does not install the new key"
+  -- A SetVariable reply that accepts the write does; a refusing one and an altered one do not.
+  let reply (payload : ByteArray) : ByteArray :=
+    sealV3 keyed.mac (bytes #[0x32, 0, 0, 0x04, 0xf2, 0, 0, 0, 6, 0x34] ++ payload)
+  let some renewed := keyed.finishRenewal newKey (reply (hexBytes "03" ++ hexBytes "00" ++ natLe 4 0))
+    | throw <| IO.userError "accepted renewal"
+  check (renewed.sessionKey == newKey && renewed.counters == keyed.counters) "accepted renewal installs the key"
+  check (keyed.finishRenewal newKey (reply (hexBytes "03" ++ hexBytes "ffffffffffffffff7f"))).isNone
+    "refused renewal keeps the old key"
+  check (keyed.finishRenewal newKey (flipByte (reply (hexBytes "0300" ++ natLe 4 0)) 40)).isNone
+    "altered renewal reply keeps the old key"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -1084,4 +1135,5 @@ def main : IO Unit := do
   testKeyDerivation
   testBlob
   testLegitimation
+  testRenewal
   IO.println "All lean-s7commplus tests passed."

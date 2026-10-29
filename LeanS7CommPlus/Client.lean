@@ -41,6 +41,8 @@ structure Client where
   session : Session
   /-- The session key and IntegrityId counters, once a SessionKey setup is accepted. -/
   keyed : Option Keyed := none
+  /-- The key family and public key of a SessionKey session, for renewals. -/
+  keyOwner : Option (KeyFamily × ByteArray) := none
   timeoutMs : Option Nat
 
 private def awaitIO (operation : Async α) : IO α := do
@@ -208,7 +210,7 @@ def Client.connectSessionKey (host : String) (port : UInt16) (testKey2 : Option 
   let securityKey := SecurityKey.ofKeys family publicKey sessionKey blob
   let (client, setupReply) ← client.step (.setupSessionKey reply.serverSessionVersion securityKey.encode)
   Client.checkSetupReply setupReply
-  let client := { client with keyed := some (Keyed.install sessionKey) }
+  let client := { client with keyed := some (Keyed.install sessionKey), keyOwner := some (family, publicKey) }
   let (client, _) ← client.step .activate
   let client ← match password with
     | some password => client.legitimate family publicKey sessionKey password
@@ -216,6 +218,34 @@ def Client.connectSessionKey (host : String) (port : UInt16) (testKey2 : Option 
   let client := { client with keyed := client.keyed.map (Keyed.skipAfterLegitimation · family) }
   let (client, _) ← client.step (.getVarSubstreamed AttributeId.effectiveProtectionLevel)
   pure client
+
+/-- Renew the session key under the old one: read a fresh challenge, build a new blob
+    and session key, write the SecurityKey with SetVariable to address 1830, and install
+    the new key only if the reply opens under the old key and accepts the write
+    (`Keyed.finishRenewal`). Otherwise the connection is closed and an error raised. -/
+def Client.renewSessionKey (client : Client) (testKey2 : Option ByteArray := none) : IO Client := do
+  let some (family, publicKey) := client.keyOwner | throw <| IO.userError "renewal needs a SessionKey session"
+  let read : Request := if family = .s71200 then .getVarSubstreamedV1 AttributeId.serverSessionRequest
+    else .getVarSubstreamed AttributeId.serverSessionRequest
+  let (client, payload) ← client.step read
+  let challenge ← orFail "renewal challenge" (decodeLegitimationChallenge payload)
+  if challenge.size ≠ 20 then
+    throw <| IO.userError s!"renewal challenge of {challenge.size} bytes, expected 20"
+  let (blob, newKey) ← drawBlob family publicKey challenge testKey2
+  let securityKey := SecurityKey.ofKeys family publicKey newKey blob
+  let some keyed := client.keyed | throw <| IO.userError "renewal needs a SessionKey session"
+  let request := Request.renewSessionKey securityKey.encode
+  let some (frame, header, sent, keyed) := client.session.sendKeyed keyed request
+    | throw <| IO.userError "renewal is not allowed in this phase"
+  Transport.sendData client.connection.socket frame client.timeoutMs
+  let replyFrame ← receiveMessage client.connection client.timeoutMs
+  let message ← orFail "renewal reply" (keyed.openReply replyFrame)
+  let (reply, _) ← orFail "renewal reply header" (decodeResponseHeader { data := message })
+  match sent.receive request header reply none, keyed.finishRenewal newKey replyFrame with
+  | some session, some renewed => pure { client with session, keyed := some renewed }
+  | _, _ =>
+    Transport.disconnect client.connection client.timeoutMs
+    throw <| IO.userError "the controller did not accept the renewed SessionKey; connection closed"
 
 def Client.qualifierForm (client : Client) : QualifierForm :=
   if client.keyed.isSome then .vlq else .fixed
