@@ -1,8 +1,30 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–2 done on 2026-10-29 (phase 2 without VLQ arrays, packed structs and the EXPLORE elements). Decision 3 is taken (plain V1 first);
+Status: phases 0–2 and the headers of phase 3 done on 2026-10-29 (phase 2 without VLQ arrays, packed structs and the EXPLORE elements). Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 3a results (headers and the integrity envelope)
+
+- **`LeanS7CommPlus.Message`**: the request header (opcode `0x31`, reserved word,
+  function, reserved word, sequence, session id, transport flags; 14 bytes), the
+  response header (opcode `0x32` or `0x02`, reserved word, function, reserved word,
+  sequence, transport flags; 10 bytes, no session id), and the integrity envelope of
+  V3 frames (`0x20`, the 32-byte HMAC-SHA256 digest, the message). The digest is
+  carried as bytes; computing it stays out of scope (decision 3).
+- **Theorems.** Round trips for all three, inside arbitrary surrounding bytes where
+  that applies. Canonical forms: the header decoders ignore exactly the two reserved
+  words (`decodeRequestHeader_canonical`, `decodeResponseHeader_canonical`), and the
+  envelope decoder is strict (`decodeIntegrityEnvelope_canonical`). A reverse lemma
+  for big-endian u32 reads (`readUInt32BE_value`) was needed and is not in lean-s7.
+- **Evidence.** All 13 frames of the CPU 1214C session decode to the function code
+  and sequence number of the capture; the V3 envelopes split and re-encode exactly.
+  The PLC answers InitSSL with the ERROR2 function `0x05a9`, as expected on a
+  session without TLS.
+- **Python finding.** `codec.decode_response_header` decodes a 14-byte layout with a
+  session id, but responses have a 10-byte header without one. The client does not
+  use the helper (it slices responses at 10 bytes and checks them with
+  `_validate_response_header`); only a unit test does.
 
 ## Phase 2b results (object trees)
 

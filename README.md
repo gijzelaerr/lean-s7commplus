@@ -31,6 +31,13 @@ Implemented and proved so far:
   `decodeValue_encode` and `decodeTree_encode`: any well-nested tree, inside arbitrary
   surrounding bytes, decodes to exactly its items. The CreateObject request and reply
   trees of the CPU 1214C session decode and re-encode byte for byte.
+- **Message headers and the integrity envelope** (`LeanS7CommPlus.Message`): the
+  14-byte request header, the 10-byte response header, and the V3 envelope (`0x20`,
+  32-byte digest, message). Round trips (`decodeRequestHeader_encode`,
+  `decodeResponseHeader_encode`, `decodeIntegrityEnvelope_encode`) and canonical
+  forms: `decodeRequestHeader_canonical` and `decodeResponseHeader_canonical` (only
+  the two reserved words are ignored) and `decodeIntegrityEnvelope_canonical`
+  (strict). Every frame of the CPU 1214C session decodes to its header.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
