@@ -136,6 +136,32 @@ def int64Vectors : List (Int × String) := [
   (9223372036854775807, "bfffffffffffffffff")
 ]
 
+/-- Encodings from the Python reference `s7commplus.codec.encode_pvalue_typed`. -/
+def pvalueVectors : List (PValue × String) := [
+  (.null, "0000"),
+  (.bool 1, "000101"),
+  (.usint 0xab, "0002ab"),
+  (.uint 0x1234, "00031234"),
+  (.udint 0x12345678, "00048191d1ac78"),
+  (.ulint 0x1000000000000000, "0005888080808080808000"),
+  (.sint 0xf0, "0006f0"),
+  (.int 0xfffe, "0007fffe"),
+  (.dint (Int32.ofInt (-100000)), "0008f9f260"),
+  (.lint (Int64.ofInt (-1152921504606846976)), "0009f88080808080808000"),
+  (.byte 0x7f, "000a7f"),
+  (.word 0xbeef, "000bbeef"),
+  (.dword 0xdeadbeef, "000cdeadbeef"),
+  (.lword 0x0123456789abcdef, "000d0123456789abcdef"),
+  (.real 0x3f800000, "000e3f800000"),
+  (.lreal 0x400921fb54442d18, "000f400921fb54442d18"),
+  (.timestamp 0x0123456789abcdef, "00100123456789abcdef"),
+  (.timespan (Int64.ofInt (-5)), "00117b"),
+  (.rid 0x8a0e0001, "00128a0e0001"),
+  (.aid 2521, "00139359"),
+  (.blob 0 (hexBytes "010203"), "00140003010203"),
+  (.wstring (hexBytes "6869"), "0015026869")
+]
+
 /-- The lean-s7 dependency is usable: its cursor reads an S7CommPlus frame header. -/
 def testFrameHeaderBytes : IO Unit := do
   let header := bytes #[protocolId, FrameVersion.v1.toByte, 0x00, 0x12]
@@ -222,6 +248,25 @@ def testInt64Vectors : IO Unit := do
       check (decoded.toInt == value && next.offset == (hexBytes hex).size) s!"int64 decoding of {hex}"
     | .error _ => throw <| IO.userError s!"int64 decoding of {hex} failed"
 
+def testPValueVectors : IO Unit := do
+  for (value, hex) in pvalueVectors do
+    check (toHex value.encode == hex) s!"PValue encoding {toHex value.encode} != {hex}"
+    match decodePValue { data := hexBytes hex } with
+    | .ok (decoded, next) =>
+      check (decoded == value && next.offset == (hexBytes hex).size) s!"PValue decoding of {hex}"
+    | .error _ => throw <| IO.userError s!"PValue decoding of {hex} failed"
+
+def testPValueRejections : IO Unit := do
+  -- Arrays (flags 0x10) are not accepted yet.
+  check (decodePValue { data := hexBytes "100201ab" } matches .error _) "array flags"
+  -- VARIANT, STRUCT and S7STRING are not scalar values here.
+  check (decodePValue { data := hexBytes "0016" } matches .error _) "VARIANT"
+  check (decodePValue { data := hexBytes "0017" } matches .error _) "STRUCT"
+  check (decodePValue { data := hexBytes "0019" } matches .error _) "S7STRING"
+  -- Truncated fixed-width and length-prefixed values.
+  check (decodePValue { data := hexBytes "000c0102" } matches .error _) "truncated DWORD"
+  check (decodePValue { data := hexBytes "0015056869" } matches .error _) "truncated WSTRING"
+
 def testSessionFrames : IO Unit := do
   for (label, version, hex) in sessionFrames do
     let frame := hexBytes hex
@@ -250,6 +295,8 @@ def main : IO Unit := do
   testInt32Vectors
   testInt32Leniency
   testInt64Vectors
+  testPValueVectors
+  testPValueRejections
   testSessionFrames
   testFrameRejections
   IO.println "All lean-s7commplus tests passed."
