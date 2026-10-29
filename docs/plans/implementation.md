@@ -1,6 +1,7 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–3 done on 2026-10-29 (phase 3 for reads and writes of DB regions) (phase 2 without VLQ arrays, packed structs and the EXPLORE elements). Decision 3 is taken (plain V1 first);
+Status: phases 0–3 done on 2026-10-29. Phase 2 does not yet cover VLQ arrays, packed
+structs or the EXPLORE elements; phase 3 covers reads and writes of DB regions. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
 
