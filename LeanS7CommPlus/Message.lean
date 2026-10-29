@@ -16,8 +16,8 @@ The data of a frame is a message, possibly inside an integrity envelope.
   client itself does not use it and slices responses at 10 bytes, as every
   response in the CPU 1214C capture requires.
 - **Integrity envelope** (V3 frames after a SessionKey setup): a length byte `0x20`,
-  the 32-byte HMAC-SHA256 digest, then the message. The digest is kept as bytes;
-  computing and checking it is out of scope (decision 3).
+  the 32-byte HMAC-SHA256 digest, then the message. The digest is kept as bytes here;
+  `LeanS7CommPlus.Integrity` computes and checks it.
 
 The decoders ignore the reserved words, as the Python client does; the encoders
 write zero.

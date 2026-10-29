@@ -7,6 +7,7 @@ import LeanS7CommPlus.Fragments
 import LeanS7CommPlus.PValue
 import LeanS7CommPlus.Tree
 import LeanS7CommPlus.Message
+import LeanS7CommPlus.Sha256
 import LeanS7CommPlus.Integrity
 import LeanS7CommPlus.Access
 import LeanS7CommPlus.Write

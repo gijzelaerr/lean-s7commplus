@@ -17,8 +17,8 @@ after each fragment, four bytes equal to the trailer end the message, anything e
 must be the next fragment's header, and all fragments carry the version of the first.
 The client caps a message at 4096 fragments; so does `maxFragments` here.
 
-Not covered: SystemEvent frames that a PLC interleaves between fragments, and V3
-fragments, whose data carries a chained HMAC (open decision 3).
+Not covered: SystemEvent frames that a PLC interleaves between fragments. V3
+fragments carry a chained HMAC on top of this layout (`LeanS7CommPlus.Integrity`).
 -/
 
 namespace LeanS7CommPlus

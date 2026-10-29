@@ -1,9 +1,34 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–5 done on 2026-10-29, as far as decision 3 allows; phase 6 (TLS) is
-out of scope under it. "What remains" lists the work that waits for decision 3 or for
-captures. Decision 3 is taken (plain V1 first); decision 1 is provisional (lean-s7
-pinned to a commit). The other decisions are open.
+Status: phases 0–5 done on 2026-10-29. Decision 3 now takes option (a) for SHA-256
+and HMAC-SHA256 (pure Lean, checked against `hashlib`); the SessionKey handshake (AES,
+the key blob) and TLS (phase 6) remain out of scope. "What remains" lists the rest.
+Decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 5d results (SHA-256 and HMAC-SHA256)
+
+- **Hash** (`LeanS7CommPlus.Sha256`): SHA-256 (FIPS 180-4) and HMAC (RFC 2104) in
+  plain Lean. `Sha256.hashFrom` compresses padded data from any chaining state with the
+  length given separately, which the state-resume dialect needs. Checked against
+  Python's `hashlib.sha256` on 16 lengths around the block boundaries (0 to 4097
+  bytes), `hmac` on 32 key and data length pairs (keys of 0 to 131 bytes, so longer
+  than a block too), and RFC 4231 case 2. Proved: tags are 32 bytes, padding fills
+  whole blocks. Not proved: equality with the standard. Not constant-time.
+- **Tags.** `Mac.hmacSha256` keys HMAC-SHA256 with the first 24 bytes of the session
+  key. `ChainedMac.stateResume` resumes the finalized inner and outer states for each
+  later fragment, as the Python `FragmentHMACVerifier` and the emulator's
+  `_protect_v3_fragments` do. `stateResume_first_tag` and
+  `sealFragments_stateResume_single`: its first tag is the standard HMAC.
+- **Interop.** A 40-byte response in three fragments, sealed by Lean in each dialect,
+  equals byte for byte the emulator's state-resume sealing and the Python verifier's
+  independent and feed-forward forms; the verifier accepts all three, and Lean opens
+  Python's frames.
+- **No live V3 session.** With a session key configured, the emulator rejects a
+  session setup that lacks a valid SecurityKey blob (return value 1), and the Python
+  client stops there. Building that blob needs the SessionKey handshake: AES, key
+  derivation and the public-key fingerprint, ported in s7commplus from HarpoS7 (MIT,
+  attribution required). That stays out of scope; going on after a rejected setup
+  would test the emulator's leniency, not the protocol.
 
 ## Phase 6 result (TLS)
 
@@ -17,17 +42,13 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Waiting for decision 3 (crypto and TLS):**
+**Still out of scope under decision 3:**
 
-- HMAC-SHA256 itself, its known-answer checks against `hashlib`, and so a live V3
-  session against the emulator's `session_key` mode. With option (a), a pure-Lean
-  SHA-256 and HMAC would plug into `Mac` and `ChainedMac` unchanged.
-- The state-resume chaining dialect of real S7-1200/1500 firmware, which continues
-  finalized SHA-256 states and so needs SHA-256 internals. It fits `ChainedMac`.
-- The V1 SessionKey handshake: the blob layout, key derivation and AES steps. The
-  emulator validates a SecurityKey setup only when `public_key_fingerprint` is
-  configured, and the algorithm is a port of HarpoS7 (MIT, attribution required), so
-  this is a second decision on top of the hash.
+- The V1 SessionKey handshake: the blob layout, key derivation and AES steps, and so a
+  live V3 session against the emulator's `session_key` mode. The emulator validates a
+  SecurityKey setup only when `public_key_fingerprint` is configured, and the
+  algorithm is a port of HarpoS7 (MIT, attribution required), so it is a decision of
+  its own.
 - TLS for V2 (phase 6).
 
 **Waiting for captures:**
@@ -78,7 +99,7 @@ The phases are done as far as the decisions allow. What is left, and what it wai
   envelope.
 - **Tests** use an order-sensitive toy MAC: changed bytes, a V1 frame, and dropped or
   swapped feed-forward fragments are refused.
-- **Blocked on decision 3.** HMAC-SHA256 itself (and so known-answer checks against
+- **Blocked on decision 3 (since done in phase 5d, except the live session).** HMAC-SHA256 itself (and so known-answer checks against
   `hashlib` and a live V3 session), and the state-resume dialect of real S7-1200/1500
   firmware, which continues finalized SHA-256 states and so needs SHA-256 internals.
   It fits `ChainedMac` with the two SHA-256 states as σ.
@@ -535,8 +556,9 @@ A capture qualifies only the conversation it shows, as in lean-s7's H1 gate.
 2. **Proof standard.** Require a canonical-form theorem (or proved leniency) for
    every decoder in the same PR that adds it, as lean-s7's plan now asks? That
    keeps the proofs current but slows the first live milestone.
-3. **Crypto and TLS.** *Decided 2026-10-29: plain V1 first; crypto is out of
-   scope for now.* Lean core has no SHA, HMAC, AES or TLS. Options for later:
+3. **Crypto and TLS.** *Decided 2026-10-29: plain V1 first; then option (a) for
+   SHA-256 and HMAC-SHA256 (phase 5d). AES, the SessionKey handshake and TLS stay out
+   of scope.* Lean core has no SHA, HMAC, AES or TLS. Options for later:
    (a) pure-Lean implementations, checked only against known-answer vectors from
    the Python code; (b) FFI to a C library (OpenSSL or mbedTLS), which gives TLS
    too but adds a native dependency; (c) stop at plain V1 and keep crypto out of
