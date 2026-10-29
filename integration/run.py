@@ -3,10 +3,11 @@
 Starts integration/emulator.py, runs lean-s7commplus-cli against it, and checks each
 result against the emulator's data and against the Python client. The checks run
 against whole replies, against replies split into 8-byte fragments, and in a V1
-SessionKey session with split replies. The SessionKey pass gives both clients key2 and
-an all-zero blob instead of drawing key2 and building the blob (the emulator cannot
-decrypt a blob); each derives the session key from key2 and the emulator's challenge.
-It checks the key derivation, the wire format and the keyed session, not the blob.
+SessionKey session with split replies. In the SessionKey pass both clients get key2
+instead of drawing it, so that the session key they derive from key2 and the emulator's
+challenge is the one the emulator holds. Each builds a real blob from the other random
+draws, but the emulator cannot decrypt a blob and checks only its key ids and flags;
+the blob itself is checked by the known-answer tests.
 
 usage: run.py
 """
@@ -36,16 +37,15 @@ def cli(port: int, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def patch_python_authenticator() -> None:
-    """Give the Python client key2 and a fixed blob, as s7commplus's own tests do; it
-    derives the session key itself."""
-    from s7commplus.v1_session_key import handshake, legitimation
-    from s7commplus.v1_session_key.key_derivation import derive_session_key
+    """Give the Python client key2; it builds the blob and derives the session key."""
+    from s7commplus.v1_session_key.real_plc import authenticator
 
-    handshake.authenticate_real_plc = lambda challenge, public_key, family: (  # type: ignore[assignment]
-        bytes(180),
-        derive_session_key(KEY2, challenge),
-    )
-    legitimation.solve_legitimate_challenge_real_plc = lambda *args: bytes(248)  # type: ignore[assignment]
+    original = authenticator.RealPlcAuthenticator.__init__
+
+    def with_key2(self: authenticator.RealPlcAuthenticator, key1: bytes | None = None, key2: bytes | None = None) -> None:
+        original(self, key1, KEY2)
+
+    authenticator.RealPlcAuthenticator.__init__ = with_key2  # type: ignore[method-assign]
 
 
 def expect(condition: bool, message: str) -> None:

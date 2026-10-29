@@ -16,5 +16,7 @@ import LeanS7CommPlus.Session
 import LeanS7CommPlus.PublicKeys
 import LeanS7CommPlus.SessionKey
 import LeanS7CommPlus.KeyDerivation
+import LeanS7CommPlus.Aes
+import LeanS7CommPlus.Blob
 import LeanS7CommPlus.KeyedSession
 import LeanS7CommPlus.Client

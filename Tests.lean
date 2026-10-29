@@ -887,6 +887,92 @@ def testKeyDerivation : IO Unit := do
     let some key := publicKey? fingerprint | throw <| IO.userError s!"{fingerprint}: no key"
     check (keyId key == id) s!"{fingerprint}: key id"
 
+/-- AES-128 (key, plaintext, ciphertext) from Python's `cryptography`; the first is FIPS-197 C.1. -/
+
+def aesVectors : List (String × String × String) := [
+  ("000102030405060708090a0b0c0d0e0f", "00112233445566778899aabbccddeeff", "69c4e0d86a7b0430d8cdb78070b4c55a"),
+  ("030a11181f262d343b424950575e656c", "05121f2c394653606d7a8794a1aebbc8", "84d256b78088813c27392464829b7081"),
+  ("ffffffffffffffffffffffffffffffff", "00000000000000000000000000000000", "a1f6258c877d5fcd8964484538bfc92c"),
+  ("116cc7227dd8338ee9449ffa55b00b66", "c8e70625446382a1c0dffe1d3c5b7a99", "ba6c7c7c436137a2d8c27619a6f030a3")]
+
+/-- s7commplus `present.encrypt(block, key)`. -/
+
+def presentVectors : List (Nat × Nat × Nat) := [
+  (0x0, 0x0, 0x9ba9d5bf4e8fd5d8),
+  (0xffffffffffffffff, 0xffffffffffffffffffff, 0xd6414c64d22f19dc),
+  (0x123456789abcdef, 0x1122334455667788aabb, 0x61e70af14a4979f6),
+  (0xf5ea1e69cbdf8ef1, 0xa98de7c5164ad032538f, 0xb746c01e6d468034)]
+
+/-- s7commplus `curve.x_multiply(scalar, x)`. -/
+
+def curveVectors : List (Nat × Nat × Nat) := [
+  (0x1, 0x7d2ed8e2846e58d74a7a613285471707a39d0c8e, 0x7d2ed8e2846e58d74a7a613285471707a39d0c8e),
+  (0x2, 0x7d2ed8e2846e58d74a7a613285471707a39d0c8e, 0x4f6183b684c872fb6b49509f4798a9bd7f7ce96e),
+  (0x3039, 0x7d2ed8e2846e58d74a7a613285471707a39d0c8e, 0xb6114803b6330063ea41fbc472506fb301e671d8),
+  (0x5445b417fbc8eac913fa812a7386eefb70636e49, 0x7d2ed8e2846e58d74a7a613285471707a39d0c8e, 0x3659aa1d84a552f930f766e035f791f6d3490d97),
+  (0x5445b417fbc8eac913fa812a7386eefb70636e49, 0x7b86dbb90a930cbd8986174801f9a35c4af0e1e0, 0xa0fb5384f81f06a5e2a5527eae8029a87e70afdb),
+  (0x0, 0x5, 0x0),
+  (0x100000000000000000000f368cda5cdb2ebfc69c7, 0x7d2ed8e2846e58d74a7a613285471707a39d0c8e, 0x0)]
+
+/-- s7commplus `checksum.multiply(a, b)`. -/
+
+def checksumVectors : List (Nat × Nat × Nat) := [
+  (0x0, 0x5, 0x0),
+  (0x1, 0x1, 0x1),
+  (0x80000000000000000000000000000000, 0x2, 0x100008005),
+  (0x2e2b2825221f1c191613100d0a070401, 0x524d48433e39342f2a25201b16110c07, 0xc7deef78c9be7c60634076070ea4b35c),
+  (0xffffffffffffffffffffffffffffffff, 0xffffffffffffffffffffffffffffffff, 0xaaaaaaaaaaaaaaaaffffffff40005552)]
+
+def preSeedVector : Nat := 0xa05b7f83e3209ad631fc45e4318e66616fc46e04
+
+def blobKeysVector : String × String × Nat := ("2a5aac14ae18fe52e2560222d0bed2ee", "2530fa6fc7c95677040956779b66398b", 0xa94ddd9af2f02e6fce3462b8735b2769)
+
+/-- s7commplus `authenticate_real_plc` with recorded random draws: fingerprint, challenge,
+    key1, key2, IV, blinding, ladder input, blob, session key. -/
+
+def blobVectors : List (String × String × String × String × String × String × String × String × String) := [
+  ("01:BD426B091F08731A", "000102030405060708090a0b0c0d0e0f10111213", "06080a0c0e10121416181a1c1e20222426282a2c2e303234", "030405060708090a0b0c0d0e0f101112131415161718191a", "090c0f1215181b1e2124272a2d303336", "0c1014181c2024282c3034383c4044484c505458", "0f14191e23282d32373c41464b50555a5f64696e",
+    "addee1feb4000000010000000100000012d7a72762e5c78601010000000000001a73081f096b42bd1001000000000000c8eb6aff5fe8e4e23e1b8c0bba9f81b2c092330d99865208595b8f49f213d9e1c7c8b6d4b76c4c810c1014181c2024282c3034383c4044484c505458090c0f1215181b1e2124272a2d30333673d6f22a80df26037a6fcec89d908f04a9178112dc1d26091ba47e6171d2b8375346a220c7e201cdb9440c7f3fa044fc9b8c195bdc807943", "9b9bf35fae6d7a1645bcc144a1e599a91915913a2ccf1ca9"),
+  ("00:0448ACCBD5A0BFD2", "052a4f7499bee3082d52779cc1e60b30557a9fc4", "7ea8d2fc26507aa4cef8224c76a0caf41e48729cc6f01a44", "7ba4cdf61f48719ac3ec153e6790b9e20b345d86afd8012a", "81acd7022d5883aed9042f5a85b0db06", "84b0dc0834608cb8e4103c6894c0ec1844709cc8", "87b4e10e3b6895c2ef1c4976a3d0fd2a5784b1de",
+    "addee1feb400000001000000010000005246235b52f5b99b0100000000000000d2bfa0d5cbac480410000000000000009ff8ff0b6b6b92f2b6fc1b87026a28ad17f07e8bb17bcddfea11e9c6ed8b8b92f110bfec60e529e984b0dc0834608cb8e4103c6894c0ec1844709cc881acd7022d5883aed9042f5a85b0db0664389caf9c29e1c87cd63ab9f0199ab8de08312583f58db2ba0ec1b60f211b73d891c482c14401e325629e0573cb7354a61191e8cbda4b6f", "936525c66040017dee3884c690de72284a30124837268be9"),
+  ("01:A95850575DF7B3DE", "09080706050403020100fffefdfcfbfaf9f8f7f6", "f6489aec3e90e23486d82a7cce2072c41668ba0c5eb00254", "f34495e63788d92a7bcc1d6ebf1061b20354a5f64798e93a", "f94c9ff24598eb3e91e4378add3083d6", "fc50a4f84ca0f4489cf04498ec4094e83c90e438", "ff54a9fe53a8fd52a7fc51a6fb50a5fa4fa4f94e",
+    "addee1feb4000000010000000100000069eac649bbc5ab190101000000000000deb3f75d575058a9100100000000000051f06a19648c9a189d9db73f415f3fc2cf82815f2ea5c7a7e4ee4d764464e06557a6ae57abb47f9cfc50a4f84ca0f4489cf04498ec4094e83c90e438f94c9ff24598eb3e91e4378add3083d68e93fcedeb7ed26a4ba11e58beec979d216ee7f07117da567b2e8a0eb0c609ca5c8229ce74df4d667963f0dc9ee3ce7c7799b6ca53c278fb", "1f6c291e179a616fe96270d9d068d01c1df66b1d7029685e")]
+
+def testBlob : IO Unit := do
+  for (key, plaintext, ciphertext) in aesVectors do
+    check (toHex (Aes.encryptBlock (hexBytes key) (hexBytes plaintext)) == ciphertext) s!"AES-128 under {key}"
+  for (block, key, expected) in presentVectors do
+    check (Present.encrypt block key == expected) s!"PRESENT {block} under {key}"
+  for (scalar, x, expected) in curveVectors do
+    check (Curve.xMultiply scalar x == expected) s!"curve {scalar} times {x}"
+  for (a, b, expected) in checksumVectors do
+    check (Checksum.multiply a b == expected) s!"checksum {a} times {b}"
+  check (Seed.preSeed (seqBytes 24 11 4) == preSeedVector) "pre-seed"
+  let (challengeKey, checksumKey, hashKey) := Seed.deriveKeys preSeedVector
+  check ((toHex challengeKey, toHex checksumKey, hashKey) == blobKeysVector) "blob keys"
+  for (fingerprint, challenge, key1, key2, iv, blinding, prng2, blob, sessionKey) in blobVectors do
+    let some (family, _) := parseFingerprint fingerprint | throw <| IO.userError s!"{fingerprint}"
+    let some publicKey := publicKey? fingerprint | throw <| IO.userError s!"{fingerprint}: no key"
+    match buildRealPlcBlob family publicKey (hexBytes challenge) (hexBytes key1) (hexBytes key2) (hexBytes iv)
+        (hexBytes blinding) (hexBytes prng2) with
+    | some (built, key) =>
+      check (built.size == 180) s!"{fingerprint}: blob size"
+      check (toHex built == blob) s!"{fingerprint}: blob"
+      check (toHex key == sessionKey) s!"{fingerprint}: session key"
+    | none => throw <| IO.userError s!"{fingerprint}: no blob"
+  -- The real CPU 1214C blob: its header is ours except the key id of key2, which was not
+  -- recorded; the IV follows the 48-byte header and the 60-byte seed.
+  let realSetup ← fixtureMessage "SetupSession (client-to-plc)"
+  let realPayload := realSetup.extract 14 realSetup.size
+  match decodeSecurityKey { data := realPayload, offset := 11 } with
+  | .ok (key, _) =>
+    let some publicKey := publicKey? "01:BD426B091F08731A" | throw <| IO.userError "public key"
+    let ours := blobMetadata .s71200 publicKey (ByteArray.mk (Array.replicate 24 0))
+    check (key.blob.size == 180) "real blob size"
+    check (key.blob.extract 0 16 == ours.extract 0 16) "real blob magic, length and constants"
+    check (key.blob.extract 24 48 == ours.extract 24 48) "real blob flags and public key id"
+  | .error error => throw <| IO.userError s!"real SecurityKey: {repr error}"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -914,4 +1000,5 @@ def main : IO Unit := do
   testHmacDialects
   testSessionKeyWire
   testKeyDerivation
+  testBlob
   IO.println "All lean-s7commplus tests passed."

@@ -4,6 +4,7 @@ import LeanS7CommPlus.Session
 import LeanS7CommPlus.Fragments
 import LeanS7CommPlus.KeyedSession
 import LeanS7CommPlus.KeyDerivation
+import LeanS7CommPlus.Blob
 
 /-!
 # A plain V1 client
@@ -136,28 +137,45 @@ def Client.connect (host : String) (port : UInt16) (timeoutMs : Option Nat := so
   Client.checkSetupReply setupReply
   pure client
 
-/-- TEST ONLY. Open a V1 SessionKey session with key2 and the blob given by the caller
-    instead of drawn and built by the handshake: the session key is derived from key2
-    and the controller's challenge (`deriveSessionKey`), then the SessionKey setup, the
-    activation and the protection-level read, then V3 frames throughout. This is how
-    the emulator, which holds a configured key and cannot decrypt a blob, is tested;
-    it exercises the key derivation, the wire format and the keyed session, not the
-    blob. -/
-def Client.connectWithTestKey2 (host : String) (port : UInt16) (key2 : ByteArray)
-    (blob : ByteArray := ByteArray.mk (Array.replicate 180 0)) (timeoutMs : Option Nat := some 5000) :
-    IO Client := do
+/-- Draw the handshake's randomness and build the blob: key2 (unless given), key1, the
+    IV, and the seed's blinding bytes and ladder input; drawn again in the negligible
+    case that the ladder input gives the point at infinity. -/
+partial def drawBlob (family : KeyFamily) (publicKey challenge : ByteArray) (key2? : Option ByteArray) :
+    IO (ByteArray × ByteArray) := do
+  let key2 ← match key2? with
+    | some key2 => pure key2
+    | none => IO.getRandomBytes 24
+  let key1 ← IO.getRandomBytes 24
+  let iv ← IO.getRandomBytes 16
+  let blinding ← IO.getRandomBytes 20
+  let prng2 ← IO.getRandomBytes 20
+  match buildRealPlcBlob family publicKey challenge key1 key2 iv blinding prng2 with
+  | some result => pure result
+  | none => drawBlob family publicKey challenge key2?
+
+/-- Open a V1 SessionKey session (S7-1200 FW < V4.5, S7-1500 FW 2.6–2.9, families 00
+    and 01): build the blob and derive the session key, then the SessionKey setup, the
+    activation and the protection-level read, then V3 frames throughout.
+
+    With `testKey2`, key2 is the given value instead of drawn. That is for the emulator,
+    which holds a configured session key: the session key must be the one derived from
+    a key2 the emulator knows. Every other draw is random either way. -/
+def Client.connectSessionKey (host : String) (port : UInt16) (testKey2 : Option ByteArray := none)
+    (timeoutMs : Option Nat := some 5000) : IO Client := do
   let (client, reply) ← Client.create host port timeoutMs
   let some challenge := reply.challenge
     | throw <| IO.userError "the controller sends no session challenge"
   if challenge.size < 18 then
     throw <| IO.userError s!"session challenge of {challenge.size} bytes is too short"
-  let sessionKey := deriveSessionKey key2 challenge
   let some fingerprint := reply.fingerprint
     | throw <| IO.userError "the controller advertises no public-key fingerprint"
   let some (family, _) := parseFingerprint fingerprint
     | throw <| IO.userError s!"unsupported fingerprint {fingerprint}"
   let some publicKey := publicKey? fingerprint
     | throw <| IO.userError s!"no bundled public key for {fingerprint}"
+  if family = .plcsim then
+    throw <| IO.userError "PLCSIM (key family 03) is not supported"
+  let (blob, sessionKey) ← drawBlob family publicKey challenge testKey2
   let securityKey := SecurityKey.ofKeys family publicKey sessionKey blob
   let (client, setupReply) ← client.step (.setupSessionKey reply.serverSessionVersion securityKey.encode)
   Client.checkSetupReply setupReply

@@ -10,9 +10,10 @@ round trips, exact lengths, and canonical decoding.
 Plain V1 is done: codecs, sessions and a client that reads, writes and browses data
 blocks on the Python emulator, with whole and with fragmented replies. V3 integrity
 framing and IntegrityIds are proved relative to an abstract MAC and run with a
-pure-Lean HMAC-SHA256 that matches Python's `hashlib`. A V1 SessionKey session runs live
-against the emulator, with the session key derived in Lean from a key2 the test gives;
-drawing key2 and building the blob (phase 7c), legitimation (7d) and TLS are still open. The
+pure-Lean HMAC-SHA256 that matches Python's `hashlib`. The V1 SessionKey handshake is
+implemented: the client builds the encrypted blob and derives the session key, and the
+session runs live against the emulator. Legitimation (phase 7d), key renewal (7e) and
+TLS are still open, and the blob has not yet met a real controller. The
 [implementation plan](docs/plans/implementation.md) describes the layers, the phases,
 the results, what remains, and the open decisions.
 
@@ -78,6 +79,12 @@ Implemented and proved so far:
   (`deriveSessionKey`), and the challenge, seed and legitimation keys, ported from
   s7commplus and HarpoS7 and checked against s7commplus on known-answer vectors,
   including the key ids of all 25 bundled public keys.
+- **The SessionKey blob** (`LeanS7CommPlus.Aes`, `LeanS7CommPlus.Blob`): AES-128, the
+  PRESENT-80 variant, the x-only ladder on the 160-bit curve, the GF(2¹²⁸) checksum,
+  and the 180-byte blob of families 00 and 01 as a pure function of the random draws
+  (`buildRealPlcBlob`). Three whole blobs equal s7commplus's byte for byte, and the real
+  CPU 1214C blob's header matches. `lean-s7commplus-cli --sessionkey` opens a
+  SessionKey session with all draws random.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
@@ -122,10 +129,10 @@ lake build lean-s7commplus-cli
 lake exe lean-s7commplus-cli 127.0.0.1 PORT read 1 0 4
 ```
 
-`--test-key2 HEX` before the host opens a SessionKey session with that key2 and an
-all-zero blob; the session key is derived from key2 and the controller's challenge.
-It exists for the emulator, which holds a configured key and does not check the blob; a
-real controller refuses the blob.
+`--sessionkey` before the host opens a V1 SessionKey session (families 00 and 01).
+`--test-key2 HEX` does the same with a given key2 instead of a random one; it exists
+for the emulator, which holds a configured session key and so must see the key2 it was
+configured for.
 
 Do not connect this software to production equipment.
 
