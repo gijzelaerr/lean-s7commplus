@@ -10,7 +10,8 @@ A command-line client for the integration tests:
 With `--sessionkey` first, the client opens a V1 SessionKey session. With
 `--test-key2 HEX` instead, it does the same but uses that key2 rather than a random one,
 so that the session key matches the one the emulator is configured with; everything
-else in the blob is drawn at random.
+else in the blob is drawn at random. `--password PW` after either legitimates the
+session with that password.
 -/
 
 open LeanS7 LeanS7CommPlus
@@ -36,18 +37,21 @@ def toHex (data : ByteArray) : String :=
     String.ofList (if digits.length == 1 then '0' :: digits else digits))
 
 def usage : String :=
-  "usage: lean-s7commplus-cli [--sessionkey | --test-key2 HEX] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
+  "usage: lean-s7commplus-cli [--sessionkey | --test-key2 HEX] [--password PW] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
 
 def run (args : List String) : IO UInt32 := do
   let (mode, args) : Option (Option ByteArray) × List String := match args with
     | "--sessionkey" :: rest => (some none, rest)
     | "--test-key2" :: hex :: rest => (some (parseHex hex), rest)
     | _ => (none, args)
+  let (password, args) : Option String × List String := match args with
+    | "--password" :: password :: rest => (some password, rest)
+    | _ => (none, args)
   match args with
   | host :: portText :: command => do
     let some port := portText.toNat? | IO.eprintln usage; return 2
     let client ← match mode with
-      | some testKey2 => Client.connectSessionKey host (UInt16.ofNat port) testKey2
+      | some testKey2 => Client.connectSessionKey host (UInt16.ofNat port) testKey2 password
       | none => Client.connect host (UInt16.ofNat port)
     match command with
     | ["read", db, start, size] =>

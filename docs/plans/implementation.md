@@ -3,8 +3,42 @@
 Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256 and
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
 Phase 7, the V1 SessionKey handshake: 7a (wire layer and a live keyed session), 7b (key
-derivation) and 7c (the blob) are done; 7d–7f follow. Decision 1 is provisional
-(lean-s7 pinned to a commit). The other decisions are open.
+derivation), 7c (the blob) and 7d (legitimation) are done; 7e (renewal) and the
+optional 7f (PLCSIM) follow. Decision 1 is provisional (lean-s7 pinned to a commit).
+The other decisions are open.
+
+## Phase 7d results (legitimation)
+
+- **Correction to the plan.** Real controllers' legitimation does not use AES-GCM;
+  that is PLCSIM's (family 03, 7f). For families 00 and 01 the answer is a second
+  authenticator round, so 7d needed SHA-1 and a key2 of any length, not GCM.
+- **Module** (`LeanS7CommPlus.Legitimation`), ported from s7commplus
+  `legitimation.py` and `connection.py` (HarpoS7's `LegitimateScheme`, MIT).
+  - `legitimationAnswer`: the 248-byte answer. key1 is
+    `deriveLegitimationChallengeKey sessionKey`, and key2 is `SHA-1(password)` followed
+    by the 20-byte challenge. The blob's challenge block encrypts zeros. A 64-byte
+    `DEADBEEF` seed header, the seed, and three `DEADBEEF` fragments frame it.
+  - `encryptChallengeAndKey2` now takes a key2 of any length; the setup blob and the
+    answer share it.
+  - The messages: GetVarSubstreamed of address 303 in the S7-1200 layout (fixed key
+    qualifier, three fill bytes) and SetVarSubstreamed of the answer to address 1846.
+  - `decodeLegitimationChallenge` reads the challenge from a BLOB or a USINT array.
+    `legitimationRefused` treats a negative return value as a refusal; that is the
+    first of s7commplus's two checks.
+- **SHA-1** (`Sha1.hash`) for the password hash. Checked on the empty string, `abc`,
+  and 1000 bytes against `hashlib`.
+- **Known answers.**
+  - An S7-1500 (family 00) answer with a non-ASCII password, from
+    `solve_legitimate_challenge_real_plc` with recorded draws.
+  - A recorded s7commplus session with the password `secret`. With its random draws,
+    Lean reproduces the setup frame (blob included), the activation, the challenge
+    read and the answer frame byte for byte. It opens the emulator's replies and
+    reads its challenge.
+- **Live.** The SessionKey pass of `integration/run.py` legitimates both clients with
+  a password. A spy on the emulator confirmed one 1846 write of 293 bytes: the
+  header and a payload with the 248-byte answer.
+- **Not checked.** The emulator accepts any answer. Only the known answers show the
+  Lean answer is right, and no controller has checked one.
 
 ## Phase 7c results (the SessionKey blob)
 
@@ -151,9 +185,9 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Planned (phase 7d–7f):** legitimation, key renewal and optionally PLCSIM; see
-"Phase 7" below. 7a (the wire layer and a live keyed session), 7b (key derivation) and
-7c (the blob) are done.
+**Planned (phase 7e–7f):** key renewal and optionally PLCSIM; see "Phase 7" below.
+7a (the wire layer and a live keyed session), 7b (key derivation), 7c (the blob) and
+7d (legitimation) are done.
 
 **Out of scope:** TLS for V2 (phase 6).
 

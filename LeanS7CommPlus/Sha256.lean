@@ -130,6 +130,48 @@ theorem pad_size (data : ByteArray) (total : Nat) : (pad data total).size % 64 =
 
 end Sha256
 
+/-! ## SHA-1
+
+Only for the password hash of the SessionKey legitimation, where the protocol fixes it. -/
+
+namespace Sha1
+
+def rotl (value : UInt32) (count : UInt32) : UInt32 :=
+  (value <<< count) ||| (value >>> (32 - count))
+
+def compress (state : Array UInt32) (data : ByteArray) (offset : Nat) : Array UInt32 := Id.run do
+  let mut w : Array UInt32 := Array.mkEmpty 80
+  for i in [0:16] do
+    w := w.push (Sha256.word data (offset + 4 * i))
+  for i in [16:80] do
+    w := w.push (rotl (w[i - 3]! ^^^ w[i - 8]! ^^^ w[i - 14]! ^^^ w[i - 16]!) 1)
+  let mut a := state[0]!
+  let mut b := state[1]!
+  let mut c := state[2]!
+  let mut d := state[3]!
+  let mut e := state[4]!
+  for i in [0:80] do
+    let (f, k) : UInt32 × UInt32 :=
+      if i < 20 then ((b &&& c) ||| ((~~~b) &&& d), 0x5a827999)
+      else if i < 40 then (b ^^^ c ^^^ d, 0x6ed9eba1)
+      else if i < 60 then ((b &&& c) ||| (b &&& d) ||| (c &&& d), 0x8f1bbcdc)
+      else (b ^^^ c ^^^ d, 0xca62c1d6)
+    let t := rotl a 5 + f + e + k + w[i]!
+    e := d
+    d := c
+    c := rotl b 30
+    b := a
+    a := t
+  return #[state[0]! + a, state[1]! + b, state[2]! + c, state[3]! + d, state[4]! + e]
+
+def hash (data : ByteArray) : ByteArray :=
+  let padded := Sha256.pad data data.size
+  let state := (List.range (padded.size / 64)).foldl (fun state block => compress state padded (64 * block))
+    #[0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0]
+  state.foldl (fun acc word => acc ++ uint32BE word) ByteArray.empty
+
+end Sha1
+
 /-! ## HMAC-SHA256 -/
 
 namespace Hmac

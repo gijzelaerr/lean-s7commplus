@@ -11,9 +11,10 @@ Plain V1 is done: codecs, sessions and a client that reads, writes and browses d
 blocks on the Python emulator, with whole and with fragmented replies. V3 integrity
 framing and IntegrityIds are proved relative to an abstract MAC and run with a
 pure-Lean HMAC-SHA256 that matches Python's `hashlib`. The V1 SessionKey handshake is
-implemented: the client builds the encrypted blob and derives the session key, and the
-session runs live against the emulator. Legitimation (phase 7d), key renewal (7e) and
-TLS are still open, and the blob has not yet met a real controller. The
+implemented: the client builds the encrypted blob, derives the session key and
+legitimates with a password, and the session runs live against the emulator. Key
+renewal (phase 7e) and TLS are still open, and no real controller has yet checked a
+Lean-built blob or answer. The
 [implementation plan](docs/plans/implementation.md) describes the layers, the phases,
 the results, what remains, and the open decisions.
 
@@ -85,6 +86,12 @@ Implemented and proved so far:
   (`buildRealPlcBlob`). Three whole blobs equal s7commplus's byte for byte, and the real
   CPU 1214C blob's header matches. `lean-s7commplus-cli --sessionkey` opens a
   SessionKey session with all draws random.
+- **Legitimation** (`LeanS7CommPlus.Legitimation`, SHA-1 in `LeanS7CommPlus.Sha256`): the
+  248-byte answer to the address-303 challenge, a second authenticator round over
+  `SHA-1(password) ‖ challenge`, and its request messages. In a recorded s7commplus
+  session with the password `secret`, the Lean setup (with a Lean-built blob),
+  challenge read and answer frames equal Python's byte for byte. `--password PW`
+  legitimates a session.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.

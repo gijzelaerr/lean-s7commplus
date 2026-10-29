@@ -973,6 +973,88 @@ def testBlob : IO Unit := do
     check (key.blob.extract 24 48 == ours.extract 24 48) "real blob flags and public key id"
   | .error error => throw <| IO.userError s!"real SecurityKey: {repr error}"
 
+/-- The s7commplus client's SessionKey session with the password `secret` against the
+    emulator (`integration/sessionkey_emulator.py`, whole replies), with key2 given and
+    every other random draw recorded: InitSSL, CreateObject, setup, activation, the
+    legitimation challenge and answer, the protection level, a read, DeleteObject. -/
+def legitimationFrames : List String := [
+  "7201001231000005b30000000000000000300000000072010000",
+  "7201000f32000005b30000000000000000000072010000",
+  "720100b031000004ca0000000100000120360000011d00040000000000a1000000d3821f0000a3816900150a7337636f6d6d706c7573a38221001513313a3a3a362e303a3a7337636f6d6d706c7573a3822800150a7337636f6d6d706c7573a38229001500a3822a00150a7337636f6d6d706c7573a3822b000401a3822c001280c3c901a3822d001500a1000000d3817f0000a38169001515537562736372697074696f6e436f6e7461696e6572a2a20000000072010000",
+  "7201008232000004ca0000000100000101a100000001000000a38231000401a3816900151330313a42443432364230393146303837333141a3822f100214000102030405060708090a0b0c0d0e0f10111213a3823200170000013a823b000401823f00151b313b36455337203231352d31414734302d30584230203b56342e3200a20000000072010000",
+  "7202015831000005420000000200000001340000000102028e268232010017000007088e090004008e0a0002008e0b0017000007218e220005ded0cdb0c8fc90f31a8e23000482108e24000400008e0c0017000007218e220005f0baaebcac9db791ab8e2300048482018e24000400008e0d0014008134addee1feb40000000100000001000000134b030d49a98ea401010000000000001a73081f096b42bd10010000000000003ebac4c6d3d7e1b043a3629f40772a78f190acb4873f70e964a89bc82a284626808f8938a25cb8b415181b1e2124272a2d303336393c3f4245484b4e0e10121416181a1c1e20222426282a2cb4b8823be823a4a5322d132ffbc2f1174b12ff803ee5fdadc656e20f0db4fccd5a9a2cfcac6f95d9a6a9115414e2098c5c41e1fa3c2b4fe9000200170000013a823b000401823f0015000000000004e88969001200000000896a001300896b0004000000000000000072020000",
+  "7201000d3200000542000000020000000072010000",
+  "720300562041517a17cda67f888fa16e86ffdcac7c090763c7c9bb6d1a7c7f69a2f1bb69f231000004f200000003000000013400000001018243000205000004e88969001200000000896a001300896b0004000000030000000072030000",
+  "7203003220badd795174cd44c78777ed1b19e25b1aa5a32514af9c4788d6acc87d0b12d13732000004b100000003000089310000000072030000",
+  "72030056203cd907324a6e96d686b4389602535b081facf121685aa488e5c3e1ea65b54521310000058600000004000000013400000001200401822f000004e88969001200000000896a001300896b000400000004010000000072030000",
+  "72030045200286b44a40e9a0feb35df297e3bf66c850c4321811c6744050c885982fdcf884320000058600000004000000100214000102030405060708090a0b0c0d0e0f101112130072030000",
+  "7203015420af7974cdf56119db3af42b82a7f4a88669d8a50c27a9794c24598f0376de261f310000057c000000050000000134000000012004018e36000004e88969001200000000896a001300896b000400000005010014008178efbeadde7c00000001000000020000000000000000040000000000001a73081f096b42bd10010000000000007d2d430bcb1fdbcc01000000000000003c000000f92f94c5af2ce2a460914744e0a90696adb6b03a5ec3028ebdb7a59c552f56f241dc2a53512a60c32a30363c42484e545a60666c72787e848a90969cefbeadde000000004000000023282d32373c41464b50555a5f64696e0b7f8c75064bfb40bedbb1177f585332c42a0efe850db4315dc2eba71c12ad8ed34b5c6ec49d9a0b1b52024f6904d02fefbeadde0100000018000000c8718f26fc18bda93762d5890ca0dd1761210e992e4ff8b6efbeadde0200000000000000050100000072030000",
+  "7203003120750bfe2e797136f558c58fd70804f9ee7196b275558259a82b05099e384ef83c320000057c000000050000010000000072030000",
+  "7203005620b78eaa240044b24c1185f3edff15143773fda9c0a82a503b5499f2a1875c559d3100000586000000060000000134000000012004018e32000004e88969001200000000896a001300896b000400000001020000000072030000",
+  "7203004520f246d35bcea7ffec80a919dc81841903e6aaf525b32f98f4faae3de26d5af2f1320000058600000006000000100214000102030405060708090a0b0c0d0e0f101112130172030000",
+  "7203005d206ae32a24acfcec05e7e7aa0f6df8d76ebd78f71fba1e1650a665a3da95ab4a7c310000054c0000000700000001340000000001070088d0b88001049376030004000004e88969001200000000896a001300896b00040000030000000072030000",
+  "720300382029694c8b3a5eac533c16b9878fb3fff1db075b4fecaae8a8cb43ad21e44ea6ca320000054c00000007000001001400040001020300000272030000",
+  "7201001231000004d40000000800000001340000000072010000",
+  "7201000f32000004d40000000800000000000072010000"]
+
+/-- The random draws of that session, in order: key1, IV, blinding and ladder input for
+    the setup blob, then IV, blinding and ladder input for the legitimation answer. -/
+def legitimationDraws : List String := ["0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e", "0e10121416181a1c1e20222426282a2c", "15181b1e2124272a2d303336393c3f4245484b4e", "1c2024282c3034383c4044484c5054585c606468", "23282d32373c41464b50555a5f64696e", "2a30363c42484e545a60666c72787e848a90969c", "31383f464d545b626970777e858c939aa1a8afb6"]
+
+/-- `hashlib.sha1` of the bytes `(7i + 3) mod 256`, 1000 of them. -/
+def sha1Vector : String := "4231a8a50a10fa9758db8ec71fdef855b751048a"
+
+def testLegitimation : IO Unit := do
+  check (toHex (Sha1.hash ByteArray.empty) == "da39a3ee5e6b4b0d3255bfef95601890afd80709") "SHA-1 of nothing"
+  check (toHex (Sha1.hash "abc".toUTF8) == "a9993e364706816aba3e25717850c26c9cd0d89d") "SHA-1 of abc"
+  check (toHex (Sha1.hash (seqBytes 1000 7 3)) == sha1Vector) "SHA-1 of 1000 bytes"
+  let frame (i : Nat) := hexBytes legitimationFrames[i]!
+  let draw (i : Nat) := hexBytes legitimationDraws[i]!
+  let key2 := seqBytes 24 1 100
+  let challenge := seqBytes 20 1 0
+  let some publicKey := publicKey? "01:BD426B091F08731A" | throw <| IO.userError "public key"
+  let some (blob, sessionKey) := buildRealPlcBlob .s71200 publicKey challenge (draw 0) key2 (draw 1) (draw 2) (draw 3)
+    | throw <| IO.userError "blob"
+  match decodeCreateObjectReply ((frame 3).extract 14 ((frame 3).size - 4)) with
+  | .error error => throw <| IO.userError s!"CreateObject: {repr error}"
+  | .ok reply =>
+    let securityKey := SecurityKey.ofKeys .s71200 publicKey sessionKey blob
+    let created : Session := { phase := .created, sessionId := reply.sessionId, sequence := 2 }
+    let some (setupFrame, _, _) := created.send (.setupSessionKey reply.serverSessionVersion securityKey.encode)
+      | throw <| IO.userError "setup"
+    check (setupFrame == frame 4) "setup frame with a Lean-built blob"
+    let ready : Session := { phase := .ready, sessionId := reply.sessionId, sequence := 3 }
+    let some (activation, _, ready, keyed) := ready.sendKeyed (Keyed.install sessionKey) .activate
+      | throw <| IO.userError "activation"
+    check (activation == frame 6) "activation frame"
+    let some (challengeRead, _, ready, keyed) := ready.sendKeyed keyed (.getVarSubstreamedV1 303)
+      | throw <| IO.userError "challenge read"
+    check (challengeRead == frame 8) "legitimation challenge read frame"
+    let some legitimationChallenge := (do
+        let message ← (keyed.openReply (frame 9)).toOption
+        (decodeLegitimationChallenge (message.extract 10 message.size)).toOption)
+      | throw <| IO.userError "legitimation challenge"
+    check (legitimationChallenge == challenge) "the emulator's legitimation challenge"
+    let some answer := legitimationAnswer .s71200 publicKey sessionKey "secret" legitimationChallenge
+        (draw 4) (draw 5) (draw 6)
+      | throw <| IO.userError "answer"
+    check (answer.size == 248) "answer size"
+    let some (answerFrame, _, _, keyed) := ready.sendKeyed keyed (.legitimate answer)
+      | throw <| IO.userError "answer frame"
+    check (answerFrame == frame 10) "legitimation answer frame"
+    match keyed.openReply (frame 11) with
+    | .ok message => check (!legitimationRefused (message.extract 10 message.size)) "legitimation accepted"
+    | .error _ => throw <| IO.userError "legitimation reply"
+    -- An S7-1500 (family 00) answer, with a non-ASCII password, from s7commplus
+    -- `solve_legitimate_challenge_real_plc` with recorded draws.
+    let some publicKey1500 := publicKey? "00:0448ACCBD5A0BFD2" | throw <| IO.userError "1500 key"
+    let some answer1500 := legitimationAnswer .s71500 publicKey1500 (seqBytes 24 5 1) "pässwörd" (seqBytes 20 9 4)
+        (hexBytes "03356799cbfd2f6193c5f7295b8dbff1") (hexBytes "0336699ccf0235689bce0134679acd00336699cc") (hexBytes "03376b9fd3073b6fa3d70b3f73a7db0f4377abdf")
+      | throw <| IO.userError "1500 answer"
+    check (toHex answer1500 == "efbeadde7c0000000100000002000000000000000004000000000000d2bfa0d5cbac480410000000000000001593e5e3adf0d98b01000000000000003c000000b847bbe3698ed0073f40e3c3ec560b1e585e58749b556100b146b29ea386bf89ac57513636ba343d0336699ccf0235689bce0134679acd00336699ccefbeadde000000004000000003356799cbfd2f6193c5f7295b8dbff1ed5f2196266ac8a4fdc69078be3ed2b8ffaca58cd93b36da7204005485f220d76eb47aee6d2c78f87210f74816fe8922efbeadde01000000180000004f2b431713416e4eac428a8215c3dfadfff7fc49cca1e4e4efbeadde0200000000000000") "S7-1500 legitimation answer"
+    check (legitimationRefused (natLe 9 0) == false) "zero return value accepted"
+    check (legitimationRefused (hexBytes "ffffffffffffffffff") == true) "negative return value refused"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -1001,4 +1083,5 @@ def main : IO Unit := do
   testSessionKeyWire
   testKeyDerivation
   testBlob
+  testLegitimation
   IO.println "All lean-s7commplus tests passed."

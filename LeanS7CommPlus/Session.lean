@@ -141,6 +141,22 @@ def getVarSubstreamedPayload (objectId address : UInt32) : ByteArray :=
   uint32BE objectId ++ bytes #[0x20, 0x04, 0x01] ++ Vlq.encodeUInt32 address ++
     encodeObjectQualifier .vlq 0 ++ uint16BE 1 ++ uint32BE 0
 
+def AttributeId.legitimate : UInt32 := 1846
+def AttributeId.serverSessionRequest : UInt32 := 303
+def FunctionCode.setVarSubstreamed : UInt16 := 0x057c
+
+/-- GetVarSubstreamed of an address in the S7-1200 SessionKey layout: the sequence
+    number as a fixed-width key qualifier, a VLQ request field and three fill bytes. -/
+def getVarSubstreamedV1Payload (objectId address : UInt32) (sequence : UInt16) : ByteArray :=
+  uint32BE objectId ++ bytes #[0x20, 0x04] ++ Vlq.encodeUInt32 1 ++ Vlq.encodeUInt32 address ++
+    encodeObjectQualifier .fixed sequence.toUInt32 ++ Vlq.encodeUInt32 1 ++ bytes #[0, 0, 0]
+
+/-- SetVarSubstreamed of the legitimation answer to address 1846, real-controller layout. -/
+def legitimatePayload (objectId : UInt32) (sequence : UInt16) (answer : ByteArray) : ByteArray :=
+  uint32BE objectId ++ bytes #[0x20, 0x04] ++ Vlq.encodeUInt32 1 ++ Vlq.encodeUInt32 AttributeId.legitimate ++
+    encodeObjectQualifier .fixed sequence.toUInt32 ++ Vlq.encodeUInt32 1 ++ bytes #[0x00, 0x14, 0x00] ++
+    Vlq.encodeUInt32 (UInt32.ofNat answer.size) ++ answer ++ Vlq.encodeUInt32 sequence.toUInt32 ++ bytes #[0, 0, 0]
+
 /-! ## CreateObject reply -/
 
 /-- The bytes of the last value of an attribute in a decoded tree: a value, or a
@@ -239,6 +255,10 @@ inductive Request where
   | activate
   /-- GetVarSubstreamed of an address of the session object. -/
   | getVarSubstreamed (address : UInt32)
+  /-- GetVarSubstreamed in the S7-1200 SessionKey layout, for the legitimation challenge. -/
+  | getVarSubstreamedV1 (address : UInt32)
+  /-- SetVarSubstreamed of the legitimation answer. -/
+  | legitimate (answer : ByteArray)
 
 def Request.function : Request → UInt16
   | .initSsl => FunctionCode.initSsl
@@ -250,6 +270,8 @@ def Request.function : Request → UInt16
   | .setupSessionKey .. => FunctionCode.setMultiVariables
   | .activate => FunctionCode.setVariable
   | .getVarSubstreamed _ => FunctionCode.getVarSubstreamed
+  | .getVarSubstreamedV1 _ => FunctionCode.getVarSubstreamed
+  | .legitimate _ => FunctionCode.setVarSubstreamed
 
 /-- The phase a request may be sent in. -/
 def Request.phase : Request → Phase
@@ -281,6 +303,8 @@ def Request.payload (session : Session) : Request → ByteArray
   | .setupSessionKey version securityKey => setupSessionKeyPayload session.sessionId securityKey version
   | .activate => activationPayload session.sessionId session.sequence
   | .getVarSubstreamed address => getVarSubstreamedPayload session.sessionId address
+  | .getVarSubstreamedV1 address => getVarSubstreamedV1Payload session.sessionId address session.sequence
+  | .legitimate answer => legitimatePayload session.sessionId session.sequence answer
 
 /-- Send `request`: the frame to put on the wire and the session after it, or `none`
     when the request is not allowed in the session's phase. -/
