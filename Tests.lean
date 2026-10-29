@@ -380,6 +380,50 @@ def testPartialFailureReplies : IO Unit := do
       check (decoded.errors.map Prod.fst == errorItems) s!"{label}: error items {decoded.errors.map Prod.fst}"
       check (decoded.encode == payload.extract 0 next.offset) s!"{label}: re-encoding"
 
+/-- The CPU 1214C write of one byte to DB1 (the one the PLC rejected): the request
+    payload decodes to that address and value with IntegrityId 2, and re-encodes. -/
+def testFixtureWrite : IO Unit := do
+  let request ← fixtureMessage "request function 0x0542 (client-to-plc)"
+  let payload := request.extract 14 request.size
+  match decodeWriteRequest .vlq true payload with
+  | .error error => throw <| IO.userError s!"write request: {repr error}"
+  | .ok (decoded, integrityId) =>
+    check (decoded.addresses == [ItemAddress.db 1 0 1]) "write request addresses"
+    check (decoded.values == [.scalar (.blob 0 (bytes #[42]))]) "write request value"
+    check (integrityId == some 2) "write request IntegrityId"
+    check (decoded.encode integrityId == payload) "write request re-encoding"
+
+def resultShape (results : List ItemResult) : List Bool :=
+  results.map fun result => match result with
+    | .ok _ => true
+    | .error _ => false
+
+/-- Per-item results of the S7-1500 partial-failure replies: the good items keep their
+    values despite the nonzero return value (#129), and a missing DB is one error (#130). -/
+def testPartialFailureResults : IO Unit := do
+  let expected : List (Nat × List Bool) :=
+    [(3, [true, false, true]), (3, [true, false, true]), (2, [false, false]), (2, [false, true])]
+  for ((label, hex), (count, shape)) in partialFailureReplies.zip expected do
+    match decodeReadReply { data := hexBytes hex } with
+    | .error error => throw <| IO.userError s!"{label}: {repr error}"
+    | .ok (reply, _) =>
+      match reply.results count with
+      | .ok results => check (resultShape results == shape) s!"{label}: results {resultShape results}"
+      | .error error => throw <| IO.userError s!"{label}: results: {repr error}"
+  -- The same reply checked against the wrong item count is refused.
+  match partialFailureReplies.head? with
+  | none => pure ()
+  | some (_, hex) =>
+    match decodeReadReply { data := hexBytes hex } with
+    | .ok (reply, _) => check (reply.results 2 matches .error _) "item outside the request"
+    | .error _ => throw <| IO.userError "decode"
+  -- A value and an error for the same item, with a non-NULL value, is refused.
+  let both : ReadReply := { returnValue := 0, values := [(1, .scalar (.usint 1))], errors := [(1, 5)] }
+  check (both.results 1 matches .error _) "value and error for one item"
+  -- An unanswered item is refused.
+  let unanswered : ReadReply := { returnValue := 0, values := [(1, .scalar (.usint 1))], errors := [] }
+  check (unanswered.results 2 matches .error _) "unanswered item"
+
 def testSessionFrames : IO Unit := do
   for (label, version, hex) in sessionFrames do
     let frame := hexBytes hex
@@ -415,5 +459,7 @@ def main : IO Unit := do
   testSessionHeaders
   testFixtureRead
   testPartialFailureReplies
+  testFixtureWrite
+  testPartialFailureResults
   testFrameRejections
   IO.println "All lean-s7commplus tests passed."

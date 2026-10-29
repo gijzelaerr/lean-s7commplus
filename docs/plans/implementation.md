@@ -1,8 +1,28 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–2 and the headers of phase 3 done on 2026-10-29 (phase 2 without VLQ arrays, packed structs and the EXPLORE elements). Decision 3 is taken (plain V1 first);
+Status: phases 0–3 done on 2026-10-29. Phase 2 does not yet cover VLQ arrays, packed
+structs or the EXPLORE elements; phase 3 covers reads and writes of DB regions. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 3c results (SetMultiVariables and per-item read results)
+
+- **`LeanS7CommPlus.Write`**: the SetMultiVariables request payload (zero word, item
+  count, field count, addresses, values numbered from 1 ending with `0x00`, object
+  qualifier, fill, with the IntegrityId before the fill) and reply (return value and
+  error list). Round trips: `decodeNumberedValues_encode`,
+  `decodeWriteRequestBody_encode`, `decodeWriteRequest_encode`, `decodeWriteReply_encode`.
+- **Per-item read results.** `ReadReply.results` maps a GetMultiVariables reply to one
+  `ItemResult` (value or PLC error) per requested item. It ignores the overall return
+  value, counts a NULL value next to an error as that error (the missing-DB answer of
+  gijzelaerr/s7commplus#130), and refuses duplicate, out-of-range or unanswered items
+  and items with both a non-NULL value and an error. `ReadReply.results_spec` proves it
+  sound: exactly one result per item, a value result is that item's value with no error
+  for it, an error result is that item's error.
+- **Evidence.** The CPU 1214C write request (one byte, value 42, to DB1, which the PLC
+  rejected) decodes with IntegrityId 2 and re-encodes byte for byte. The four S7-1500
+  partial-failure replies give the per-item results gijzelaerr/s7commplus#129 asks for:
+  the good items keep their values despite the nonzero return value.
 
 ## Phase 3b results (GetMultiVariables)
 
