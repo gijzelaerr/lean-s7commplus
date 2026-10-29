@@ -6,6 +6,10 @@ A command-line client for the integration tests:
     lean-s7commplus-cli HOST PORT read DB START SIZE    prints the bytes as hex
     lean-s7commplus-cli HOST PORT write DB START HEX
     lean-s7commplus-cli HOST PORT browse                prints "number name" per data block
+
+With `--test-session-key HEX` first, the client opens a V1 SessionKey session with that
+session key and an all-zero blob instead of the handshake cryptography. This is for the
+emulator only, which holds a configured key and does not check the blob.
 -/
 
 open LeanS7 LeanS7CommPlus
@@ -31,13 +35,18 @@ def toHex (data : ByteArray) : String :=
     String.ofList (if digits.length == 1 then '0' :: digits else digits))
 
 def usage : String :=
-  "usage: lean-s7commplus-cli HOST PORT (read DB START SIZE | write DB START HEX | browse)"
+  "usage: lean-s7commplus-cli [--test-session-key HEX] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
 
 def run (args : List String) : IO UInt32 := do
+  let (testKey, args) := match args with
+    | "--test-session-key" :: hex :: rest => (parseHex hex, rest)
+    | _ => (none, args)
   match args with
   | host :: portText :: command => do
     let some port := portText.toNat? | IO.eprintln usage; return 2
-    let client ← Client.connect host (UInt16.ofNat port)
+    let client ← match testKey with
+      | some key => Client.connectWithTestKey host (UInt16.ofNat port) key
+      | none => Client.connect host (UInt16.ofNat port)
     match command with
     | ["read", db, start, size] =>
       let (some db, some start, some size) := (db.toNat?, start.toNat?, size.toNat?)

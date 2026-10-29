@@ -2,7 +2,10 @@
 
 Starts integration/emulator.py, runs lean-s7commplus-cli against it, and checks each
 result against the emulator's data and against the Python client. The checks run
-twice: against whole replies, and against replies split into 8-byte fragments.
+against whole replies, against replies split into 8-byte fragments, and in a V1
+SessionKey session with split replies. The SessionKey pass gives both clients the
+emulator's session key instead of the handshake cryptography (the emulator cannot
+decrypt a blob), so it checks the wire format and the keyed session, not the blob.
 
 usage: run.py
 """
@@ -14,14 +17,29 @@ from pathlib import Path
 
 from s7commplus import Client
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sessionkey_emulator import SESSION_KEY
+
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / ".lake" / "build" / "bin" / ("lean-s7commplus-cli.exe" if os.name == "nt" else "lean-s7commplus-cli")
 
 
+KEYED = False
+
+
 def cli(port: int, *args: str) -> subprocess.CompletedProcess[str]:
+    prefix = ["--test-session-key", SESSION_KEY.hex()] if KEYED else []
     return subprocess.run(
-        [str(CLI), "127.0.0.1", str(port), *args], capture_output=True, text=True, timeout=60, check=False
+        [str(CLI), *prefix, "127.0.0.1", str(port), *args], capture_output=True, text=True, timeout=60, check=False
     )
+
+
+def patch_python_authenticator() -> None:
+    """Give the Python client the emulator's session key, as s7commplus's own tests do."""
+    from s7commplus.v1_session_key import handshake, legitimation
+
+    handshake.authenticate_real_plc = lambda challenge, public_key, family: (bytes(180), SESSION_KEY)  # type: ignore[assignment]
+    legitimation.solve_legitimate_challenge_real_plc = lambda *args: bytes(248)  # type: ignore[assignment]
 
 
 def expect(condition: bool, message: str) -> None:
@@ -30,9 +48,11 @@ def expect(condition: bool, message: str) -> None:
     print(f"ok: {message}")
 
 
-def run_checks(max_response_pdu: int | None) -> None:
-    arguments = [] if max_response_pdu is None else [str(max_response_pdu)]
-    print(f"emulator max_response_pdu={max_response_pdu}")
+def run_checks(max_response_pdu: int | None, sessionkey: bool = False) -> None:
+    global KEYED
+    KEYED = sessionkey
+    arguments = ([] if max_response_pdu is None else [str(max_response_pdu)]) + (["--sessionkey"] if sessionkey else [])
+    print(f"emulator max_response_pdu={max_response_pdu} sessionkey={sessionkey}")
     emulator = subprocess.Popen(
         [sys.executable, str(ROOT / "integration" / "emulator.py"), *arguments],
         stdin=subprocess.PIPE,
@@ -62,6 +82,8 @@ def run_checks(max_response_pdu: int | None) -> None:
         # Differential: the Python client sees the same data the Lean client wrote.
         client = Client()
         client.connect("127.0.0.1", port=port)
+        if sessionkey:
+            expect(client._connection._session_key == SESSION_KEY, "Python client runs a SessionKey session")
         try:
             expect(client.db_read(1, 0, 4).hex() == after.stdout.strip(), "Python client agrees on DB1.0..4")
             client.db_write(7, 0, b"\x01\x02\x03\x04")
@@ -78,6 +100,8 @@ def run_checks(max_response_pdu: int | None) -> None:
 def main() -> None:
     run_checks(None)
     run_checks(8)
+    patch_python_authenticator()
+    run_checks(8, sessionkey=True)
     print("integration: all checks passed")
 
 

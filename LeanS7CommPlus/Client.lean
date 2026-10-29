@@ -2,6 +2,7 @@ import Std.Async.TCP
 import LeanS7.Transport
 import LeanS7CommPlus.Session
 import LeanS7CommPlus.Fragments
+import LeanS7CommPlus.KeyedSession
 
 /-!
 # A plain V1 client
@@ -35,6 +36,8 @@ def localTsap : UInt16 := 0x0600
 structure Client where
   connection : Transport.Connection
   session : Session
+  /-- The session key and IntegrityId counters, once a SessionKey setup is accepted. -/
+  keyed : Option Keyed := none
   timeoutMs : Option Nat
 
 private def awaitIO (operation : Async α) : IO α := do
@@ -76,27 +79,38 @@ def receiveMessage (connection : Transport.Connection) (timeoutMs : Option Nat) 
     units := units + 1
   pure buffer
 
-/-- Send a request and receive its reply: the reply header and the payload after it. -/
+/-- Send a request and receive its reply: the reply header and the payload after it.
+    In a keyed session the request is sealed and the reply checked under the key. -/
 def Client.exchange (client : Client) (request : Request) :
-    IO (ResponseHeader × ByteArray × RequestHeader × Session) := do
-  let some (frame, header, sent) := client.session.send request
-    | throw <| IO.userError s!"request {request.function} is not allowed in phase {repr client.session.phase}"
+    IO (ResponseHeader × ByteArray × RequestHeader × Session × Option Keyed) := do
+  let (frame, header, sent, keyed) ← match client.keyed with
+    | none =>
+      match client.session.send request with
+      | some (frame, header, sent) => pure (frame, header, sent, none)
+      | none => throw <| IO.userError s!"request {request.function} is not allowed in phase {repr client.session.phase}"
+    | some keyed =>
+      match client.session.sendKeyed keyed request with
+      | some (frame, header, sent, keyed) => pure (frame, header, sent, some keyed)
+      | none => throw <| IO.userError s!"request {request.function} is not allowed in phase {repr client.session.phase}"
   Transport.sendData client.connection.socket frame client.timeoutMs
   let replyFrame ← receiveMessage client.connection client.timeoutMs
-  let (_, message) ← orFail "reply frame" (reassemble replyFrame)
+  let message ← match keyed with
+    | none => pure (← orFail "reply frame" (reassemble replyFrame)).2
+    | some keyed => orFail "keyed reply" (keyed.openReply replyFrame)
   let (reply, _) ← orFail "reply header" (decodeResponseHeader { data := message })
-  pure (reply, message.extract 10 message.size, header, sent)
+  pure (reply, message.extract 10 message.size, header, sent, keyed)
 
 /-- Run one request through the session state machine. -/
 def Client.step (client : Client) (request : Request) (sessionId : ByteArray → Option UInt32 := fun _ => none) :
     IO (Client × ByteArray) := do
-  let (reply, payload, header, sent) ← client.exchange request
+  let (reply, payload, header, sent, keyed) ← client.exchange request
   let some next := sent.receive request header reply (sessionId payload)
     | throw <| IO.userError s!"reply function {reply.function} sequence {reply.sequence} does not answer request {header.function} sequence {header.sequence}"
-  pure ({ client with session := next }, payload)
+  pure ({ client with session := next, keyed }, payload)
 
-/-- Connect and open a plain V1 session: InitSSL, CreateObject, SetupSession. -/
-def Client.connect (host : String) (port : UInt16) (timeoutMs : Option Nat := some 5000) : IO Client := do
+/-- Connect, then InitSSL and CreateObject: the client and the CreateObject reply. -/
+def Client.create (host : String) (port : UInt16) (timeoutMs : Option Nat) :
+    IO (Client × CreateObjectReply) := do
   let connection ← connectTransport host port timeoutMs
   let client : Client := { connection, session := Session.initial, timeoutMs }
   let (client, _) ← client.step .initSsl
@@ -107,15 +121,51 @@ def Client.connect (host : String) (port : UInt16) (timeoutMs : Option Nat := so
   let reply ← orFail "CreateObject reply" (decodeCreateObjectReply payload)
   if reply.returnValue != 0 then
     throw <| IO.userError s!"CreateObject failed with return value {reply.returnValue}"
-  let (client, setupReply) ← client.step (.setupSession reply.serverSessionVersion)
+  pure (client, reply)
+
+def Client.checkSetupReply (setupReply : ByteArray) : IO Unit := do
   let (returnValue, _) ← orFail "SetupSession reply" (Vlq.decodeUInt64 { data := setupReply })
   if returnValue != 0 then
     throw <| IO.userError s!"SetupSession failed with return value {returnValue}"
+
+/-- Connect and open a plain V1 session: InitSSL, CreateObject, SetupSession. -/
+def Client.connect (host : String) (port : UInt16) (timeoutMs : Option Nat := some 5000) : IO Client := do
+  let (client, reply) ← Client.create host port timeoutMs
+  let (client, setupReply) ← client.step (.setupSession reply.serverSessionVersion)
+  Client.checkSetupReply setupReply
   pure client
+
+/-- TEST ONLY. Open a V1 SessionKey session with a session key and blob given by the
+    caller instead of the handshake cryptography: the SessionKey setup, the
+    activation and the protection-level read, then V3 frames throughout. This is how
+    the emulator, which holds a configured key and cannot decrypt a blob, is tested;
+    it exercises the wire format and the keyed session, not the blob. -/
+def Client.connectWithTestKey (host : String) (port : UInt16) (sessionKey : ByteArray)
+    (blob : ByteArray := ByteArray.mk (Array.replicate 180 0)) (timeoutMs : Option Nat := some 5000) :
+    IO Client := do
+  let (client, reply) ← Client.create host port timeoutMs
+  let some fingerprint := reply.fingerprint
+    | throw <| IO.userError "the controller advertises no public-key fingerprint"
+  let some (family, _) := parseFingerprint fingerprint
+    | throw <| IO.userError s!"unsupported fingerprint {fingerprint}"
+  let some publicKey := publicKey? fingerprint
+    | throw <| IO.userError s!"no bundled public key for {fingerprint}"
+  let securityKey := SecurityKey.ofKeys family publicKey sessionKey blob
+  let (client, setupReply) ← client.step (.setupSessionKey reply.serverSessionVersion securityKey.encode)
+  Client.checkSetupReply setupReply
+  let client := { client with keyed := some (Keyed.install sessionKey) }
+  let (client, _) ← client.step .activate
+  let client := { client with keyed := client.keyed.map (Keyed.skipAfterLegitimation · family) }
+  let (client, _) ← client.step (.getVarSubstreamed AttributeId.effectiveProtectionLevel)
+  pure client
+
+def Client.qualifierForm (client : Client) : QualifierForm :=
+  if client.keyed.isSome then .vlq else .fixed
 
 /-- Read `size` bytes at `start` of data block `db`. -/
 def Client.readDb (client : Client) (db : UInt16) (start size : UInt32) : IO (Client × ByteArray) := do
-  let request : ReadRequest := { addresses := [ItemAddress.db db start size], form := .fixed, keyQualifier := 0 }
+  let request : ReadRequest :=
+    { addresses := [ItemAddress.db db start size], form := client.qualifierForm, keyQualifier := 0 }
   let (client, payload) ← client.step (.read request)
   let (reply, _) ← orFail "read reply" (decodeReadReply { data := payload })
   let results ← orFail "read results" (reply.results 1)
@@ -129,8 +179,12 @@ def Client.readDb (client : Client) (db : UInt16) (start size : UInt32) : IO (Cl
 def Client.writeDb (client : Client) (db : UInt16) (start : UInt32) (data : ByteArray) : IO Client := do
   let request : WriteRequest :=
     { addresses := [ItemAddress.db db start (UInt32.ofNat data.size)],
-      values := [.scalar (.blob 0 data)], form := .fixed, keyQualifier := 0 }
+      values := [.scalar (.blob 0 data)], form := client.qualifierForm, keyQualifier := 0 }
   let (client, payload) ← client.step (.write request)
+  -- A keyed write reply leads with its IntegrityId.
+  let payload ← if client.keyed.isSome then
+      pure (← orFail "write reply IntegrityId" (decodeLeadingIntegrityId payload)).2
+    else pure payload
   let (reply, _) ← orFail "write reply" (decodeWriteReply { data := payload })
   if reply.returnValue != 0 then
     throw <| IO.userError s!"write failed with return value {reply.returnValue}"

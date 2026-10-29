@@ -10,8 +10,9 @@ round trips, exact lengths, and canonical decoding.
 Plain V1 is done: codecs, sessions and a client that reads, writes and browses data
 blocks on the Python emulator, with whole and with fragmented replies. V3 integrity
 framing and IntegrityIds are proved relative to an abstract MAC and run with a
-pure-Lean HMAC-SHA256 that matches Python's `hashlib`. The SessionKey handshake (and so
-a live V3 session) and TLS are still open. The
+pure-Lean HMAC-SHA256 that matches Python's `hashlib`. A V1 SessionKey session runs live
+against the emulator with a session key given by the test; the handshake cryptography
+that derives that key and the blob (phase 7b–7d) and TLS are still open. The
 [implementation plan](docs/plans/implementation.md) describes the layers, the phases,
 the results, what remains, and the open decisions.
 
@@ -62,6 +63,16 @@ Implemented and proved so far:
   sequence numbers, a reply is accepted only if it answers the outstanding request, and
   data requests need a completed SetupSession. `lean-s7commplus-cli` connects to the
   Python emulator and reads, writes and browses data blocks.
+- **SessionKey sessions, wire layer** (`LeanS7CommPlus.SessionKey`,
+  `LeanS7CommPlus.KeyedSession`): the SecurityKey struct (`decodeSecurityKey_encode`,
+  through the proved tree codec), the SessionKey setup, the activation and the
+  protection-level read, and keyed sessions that seal every request with HMAC-SHA256
+  and the next IntegrityId of its counter (`Session.sendKeyed_spec`,
+  `Session.sendKeyed_opens`, `Session.sendKeyed_counter`) and accept a reply only if it
+  is the state-resume sealing of its message (`Keyed.openReply_sound`). The real CPU
+  1214C SetupSession, activation and protection-level read re-encode byte for byte;
+  against the emulator, every request frame equals the Python client's, tags included.
+  The public-key table and key ids derive from HarpoS7 (MIT, `LICENSE-HarpoS7`).
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
@@ -98,13 +109,17 @@ re-encodes byte for byte, and the VLQ encoders match the Python reference on
 boundary values.
 
 `integration/run.py` runs the Lean client against the Python s7commplus emulator, with
-whole and with fragmented replies, and
+whole and with fragmented replies and in a SessionKey session, and
 `integration/fuzz.py` compares the Lean decoders with the Python ones on mutated input.
 
 ```console
 lake build lean-s7commplus-cli
 lake exe lean-s7commplus-cli 127.0.0.1 PORT read 1 0 4
 ```
+
+`--test-session-key HEX` before the host opens a SessionKey session with that key
+instead of the handshake cryptography. It exists for the emulator, which holds a
+configured key and does not check the blob; a real controller refuses it.
 
 Do not connect this software to production equipment.
 

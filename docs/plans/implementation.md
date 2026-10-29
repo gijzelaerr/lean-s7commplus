@@ -2,9 +2,58 @@
 
 Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256 and
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
-Phase 7, the V1 SessionKey handshake, is planned and waits for the decisions listed
-in its section. Decision 1 is provisional (lean-s7 pinned to a commit). The other
-decisions are open.
+Phase 7, the V1 SessionKey handshake, is under way: 7a (wire layer and a live keyed
+session against the emulator) is done, 7b–7f follow. Decision 1 is provisional
+(lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 7a results (SessionKey wire layer and a live keyed session)
+
+Decisions taken 2026-10-29 (the defaults of the phase 7 plan): port the compact
+s7commplus runtime with HarpoS7's notice, families 00 and 01 first, a test-only key
+injection for the emulator, and the public-key table shipped as data.
+
+- **Wire layer** (`LeanS7CommPlus.SessionKey`, `LeanS7CommPlus.PublicKeys`): key
+  families and flags, fingerprints, the bundled public keys (25, from HarpoS7 through
+  s7commplus), key ids (`SHA-256(key[:24] ‖ "DERIVE")[:8]`, little-endian), and the
+  SecurityKey struct 1800. The struct is a tree struct, so the phase 2b codec carries
+  it: `decodeSecurityKey_encode`, with `SecurityKey.closes` and `SecurityKey.fits`.
+  `setupSessionKeyPayload`, `activationPayload`, `getVarSubstreamedPayload` and
+  `stripPaomString` (the order string the controller refuses to get back) follow
+  s7commplus byte for byte.
+- **Keyed sessions** (`LeanS7CommPlus.KeyedSession`): `Session.sendKeyed` seals the
+  request message, with the next IntegrityId of its counter before its fill (three
+  bytes for the activation, four otherwise), under HMAC-SHA256 of the session key.
+  `Keyed.openReply` checks replies with the state-resume chain. Theorems:
+  `Session.sendKeyed_spec` (exactly what goes on the wire; phase, header and sequence
+  as a plain send), `Session.sendKeyed_opens`, `Session.sendKeyed_counter` (a read
+  steps only the read counter, anything else only the write counter),
+  `Keyed.openReply_sound`, and `Session.ready_only_after_setup` now with the SessionKey
+  setup as the second way to a ready session. The S7-1200 skip of one id on both
+  counters after the legitimation step is `Keyed.skipAfterLegitimation`.
+- **Real controller.** The CPU 1214C capture (s7commplus#136): its SecurityKey
+  decodes, its public key id is `keyId` of the bundled `01:BD426B091F08731A` key, its
+  symmetric flags are `0x10101`, and its SetupSession payload, activation and
+  protection-level read re-encode byte for byte, with IntegrityIds 0 and 1.
+- **Emulator transcript** (`fixtures/emulator-sessionkey-session.json`): the s7commplus
+  client's SessionKey session against the emulator. Every Lean request frame, the
+  setup and five keyed requests, equals the Python one byte for byte, HMAC tags
+  included, and every reply, split into 8-byte fragments, opens under the key.
+- **Live.** `integration/run.py` runs a third pass with the emulator in SessionKey mode
+  and 8-byte fragments: the Lean CLI with `--test-session-key` reads, writes, browses
+  and gets the missing-DB error, and agrees with the Python client in both directions.
+  A wrong key makes the emulator drop the connection. Passes against s7commplus 0.3.0
+  and `master`.
+- **What the live run does not check.** Both clients get the emulator's configured
+  session key and an all-zero blob, as s7commplus's own tests do; the emulator checks
+  only the SecurityKey's structure, key id and flags, never the blob. Legitimation is
+  not exercised: the Python client skips it without a password, the emulator does not
+  require it, and its answer needs AES-GCM (7d).
+- **Emulator finding.** In SessionKey mode the emulator writes the ServerSessionVersion
+  struct id as a VLQ (`82 3a`); a real CPU 1214C writes a 4-byte word (`00 00 01 3a`,
+  s7commplus#136), as the tree codec expects. The Python client then reads the struct
+  short and never reaches the order string it is meant to strip. The integration uses
+  `integration/sessionkey_emulator.py`, which writes the struct as the controller does.
+  Not yet reported upstream.
 
 ## Phase 5d results (SHA-256 and HMAC-SHA256)
 
@@ -43,8 +92,9 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Planned (phase 7):** the V1 SessionKey handshake, and with it a live V3 session
-against the emulator; see "Phase 7" below.
+**Planned (phase 7b–7f):** the SessionKey handshake cryptography (key derivation, the
+blob, legitimation, renewal); see "Phase 7" below. 7a, the wire layer and a live
+keyed session, is done.
 
 **Out of scope:** TLS for V2 (phase 6).
 

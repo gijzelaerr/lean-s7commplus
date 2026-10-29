@@ -13,4 +13,7 @@ import LeanS7CommPlus.Access
 import LeanS7CommPlus.Write
 import LeanS7CommPlus.IntegrityId
 import LeanS7CommPlus.Session
+import LeanS7CommPlus.PublicKeys
+import LeanS7CommPlus.SessionKey
+import LeanS7CommPlus.KeyedSession
 import LeanS7CommPlus.Client
