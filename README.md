@@ -11,8 +11,8 @@ Plain V1 is done: codecs, sessions and a client that reads, writes and browses d
 blocks on the Python emulator, with whole and with fragmented replies. V3 integrity
 framing and IntegrityIds are proved relative to an abstract MAC and run with a
 pure-Lean HMAC-SHA256 that matches Python's `hashlib`. A V1 SessionKey session runs live
-against the emulator with a session key given by the test; the handshake cryptography
-that derives that key and the blob (phase 7b–7d) and TLS are still open. The
+against the emulator, with the session key derived in Lean from a key2 the test gives;
+drawing key2 and building the blob (phase 7c), legitimation (7d) and TLS are still open. The
 [implementation plan](docs/plans/implementation.md) describes the layers, the phases,
 the results, what remains, and the open decisions.
 
@@ -73,6 +73,11 @@ Implemented and proved so far:
   1214C SetupSession, activation and protection-level read re-encode byte for byte;
   against the emulator, every request frame equals the Python client's, tags included.
   The public-key table and key ids derive from HarpoS7 (MIT, `LICENSE-HarpoS7`).
+- **SessionKey key derivation** (`LeanS7CommPlus.KeyDerivation`): the challenge
+  fingerprint (a 13-round SPN on AES's inverse S-box), the session key
+  (`deriveSessionKey`), and the challenge, seed and legitimation keys, ported from
+  s7commplus and HarpoS7 and checked against s7commplus on known-answer vectors,
+  including the key ids of all 25 bundled public keys.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
@@ -117,9 +122,10 @@ lake build lean-s7commplus-cli
 lake exe lean-s7commplus-cli 127.0.0.1 PORT read 1 0 4
 ```
 
-`--test-session-key HEX` before the host opens a SessionKey session with that key
-instead of the handshake cryptography. It exists for the emulator, which holds a
-configured key and does not check the blob; a real controller refuses it.
+`--test-key2 HEX` before the host opens a SessionKey session with that key2 and an
+all-zero blob; the session key is derived from key2 and the controller's challenge.
+It exists for the emulator, which holds a configured key and does not check the blob; a
+real controller refuses the blob.
 
 Do not connect this software to production equipment.
 

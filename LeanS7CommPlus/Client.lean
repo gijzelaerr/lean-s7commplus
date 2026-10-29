@@ -3,6 +3,7 @@ import LeanS7.Transport
 import LeanS7CommPlus.Session
 import LeanS7CommPlus.Fragments
 import LeanS7CommPlus.KeyedSession
+import LeanS7CommPlus.KeyDerivation
 
 /-!
 # A plain V1 client
@@ -135,15 +136,22 @@ def Client.connect (host : String) (port : UInt16) (timeoutMs : Option Nat := so
   Client.checkSetupReply setupReply
   pure client
 
-/-- TEST ONLY. Open a V1 SessionKey session with a session key and blob given by the
-    caller instead of the handshake cryptography: the SessionKey setup, the
+/-- TEST ONLY. Open a V1 SessionKey session with key2 and the blob given by the caller
+    instead of drawn and built by the handshake: the session key is derived from key2
+    and the controller's challenge (`deriveSessionKey`), then the SessionKey setup, the
     activation and the protection-level read, then V3 frames throughout. This is how
     the emulator, which holds a configured key and cannot decrypt a blob, is tested;
-    it exercises the wire format and the keyed session, not the blob. -/
-def Client.connectWithTestKey (host : String) (port : UInt16) (sessionKey : ByteArray)
+    it exercises the key derivation, the wire format and the keyed session, not the
+    blob. -/
+def Client.connectWithTestKey2 (host : String) (port : UInt16) (key2 : ByteArray)
     (blob : ByteArray := ByteArray.mk (Array.replicate 180 0)) (timeoutMs : Option Nat := some 5000) :
     IO Client := do
   let (client, reply) ← Client.create host port timeoutMs
+  let some challenge := reply.challenge
+    | throw <| IO.userError "the controller sends no session challenge"
+  if challenge.size < 18 then
+    throw <| IO.userError s!"session challenge of {challenge.size} bytes is too short"
+  let sessionKey := deriveSessionKey key2 challenge
   let some fingerprint := reply.fingerprint
     | throw <| IO.userError "the controller advertises no public-key fingerprint"
   let some (family, _) := parseFingerprint fingerprint

@@ -818,6 +818,75 @@ def testSessionKeyWire : IO Unit := do
       | .error error => throw <| IO.userError s!"reply {first}: {repr error}"
       check (keyed.openReply (flipByte units 40)).toBool.not s!"reply {first}: changed byte refused"
 
+/-- s7commplus `fingerprint_challenge` of 20-byte challenges `(a·i + c) mod 256`: a, c, fingerprint. -/
+def fingerprintVectors : List (Nat × Nat × String) := [
+  (1, 0, "e2116ffb5d62d807"),
+  (0, 0, "5843c81129fe37c7"),
+  (0, 255, "e899de63dec873c3"),
+  (7, 3, "122d636fd2f000b2"),
+  (13, 1, "cb5103022ea35b7d"),
+  (31, 200, "2a434083f66f94a0"),
+  (97, 17, "f963152377763ce0"),
+  (255, 128, "7c2ab9995a0a6efd")]
+
+/-- s7commplus `derive_session_key(key2, challenge)` with key2 `(a·i + c) mod 256` (24 bytes) and challenge `(5i + 2) mod 256`. -/
+def sessionKeyVectors : List (Nat × Nat × String) := [
+  (1, 0, "3a3a42d2130ef21798e54315c102096703deeed881ce40f7"),
+  (3, 7, "eba06813f8ca7c35af6910c3ac3b8578b60fc66f76ac0a25"),
+  (11, 99, "2c3ad8249f064439cbd4484e137ccdf538fd3604a26612cf"),
+  (0, 0, "6ca3931445434b274ba5030b5415fb140d3f6f3d510e6ec6")]
+
+/-- The other KDFs on the inputs of `kdfInput`. -/
+def challengeKeyVector : String := "9742fc36cfd0f91aa87619220c882964"
+def seedKeyIvVector : String := "0664fd07b866e69a2b119f5e62b6c781db63dae7f720a0edf5f708af441eab7282347c5bc43bf9a8b1324f84308b2f6a"
+def legitimationKeyVector : String := "1a15d5191f0eca23fe0d86a4387ba07d70064f2c841d5477"
+
+/-- s7commplus `derive_key_id` of every bundled public key, as a little-endian number. -/
+def publicKeyIdVectors : List (String × UInt64) := [
+  ("00:0448ACCBD5A0BFD2", 308686565937299410),
+  ("00:181B7B0847D11694", 1737117356776298132),
+  ("00:1B580465BB0551B2", 1970329671950487986),
+  ("00:2C1DD211E529278D", 3178927886294394765),
+  ("00:580B8A122D42D1C0", 6344316310754873792),
+  ("00:60CDAAA33E0B5D20", 6975419015964089632),
+  ("00:65227E2580029B7F", 7287525846565428095),
+  ("00:6BA412F7F1D965AA", 7756345314362615210),
+  ("00:99E4632334CC7993", 11089097185353824659),
+  ("00:ACD68E9BF9901F8B", 12454298620097732491),
+  ("00:C4F47B876DA76D52", 14192104147341765970),
+  ("00:D3F9CD55A57FE4EB", 15274465378936284395),
+  ("00:E69E7A996524AFAC", 16617854474289196972),
+  ("01:A95850575DF7B3DE", 12202591526529250270),
+  ("01:AC9BE476CB324E65", 12437785994780102245),
+  ("01:BD426B091F08731A", 13637580308550808346),
+  ("03:09013727CCBFBF3C", 648860465396432700),
+  ("03:4964E2F77A386F64", 5288601414975123300),
+  ("03:5A9B6B015F48D284", 6528929738441413252),
+  ("03:950840E428F7C7FA", 10738904660148996090),
+  ("03:AE5147B429BBA96C", 12560899674832873836),
+  ("03:B07654AC9CAA4ACA", 12715443698266688202),
+  ("03:CE331E08538A26B9", 14858252616735532729),
+  ("03:D61B355B59D711A9", 15427983614953329065),
+  ("03:E90B455D3CC46013", 16792591902334803987)]
+
+
+def seqBytes (count a c : Nat) : ByteArray :=
+  ((List.range count).map fun i => UInt8.ofNat ((a * i + c) % 256)).toByteArray
+
+def testKeyDerivation : IO Unit := do
+  for (a, c, hex) in fingerprintVectors do
+    check (toHex (fingerprintChallenge (seqBytes 20 a c)) == hex) s!"fingerprint of challenge {a}i+{c}"
+  for (a, c, hex) in sessionKeyVectors do
+    check (toHex (deriveSessionKey (seqBytes 24 a c) (seqBytes 20 5 2)) == hex) s!"session key from key2 {a}i+{c}"
+  check (toHex (deriveChallengeEncryptionKey (seqBytes 24 3 1)) == challengeKeyVector) "challenge encryption key"
+  check (toHex (deriveSeedEncryptionKeyAndIv (seqBytes 32 5 9) (seqBytes 64 7 4)) == seedKeyIvVector)
+    "seed encryption key and IV"
+  check (toHex (deriveLegitimationChallengeKey (seqBytes 24 11 6)) == legitimationKeyVector) "legitimation key"
+  check (publicKeyIdVectors.length == 25) "every bundled key has a vector"
+  for (fingerprint, id) in publicKeyIdVectors do
+    let some key := publicKey? fingerprint | throw <| IO.userError s!"{fingerprint}: no key"
+    check (keyId key == id) s!"{fingerprint}: key id"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -844,4 +913,5 @@ def main : IO Unit := do
   testSha256
   testHmacDialects
   testSessionKeyWire
+  testKeyDerivation
   IO.println "All lean-s7commplus tests passed."
