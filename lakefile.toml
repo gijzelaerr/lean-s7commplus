@@ -1,0 +1,22 @@
+name = "lean-s7commplus"
+version = "0.0.0"
+defaultTargets = ["LeanS7CommPlus"]
+
+# lean-s7 provides the byte cursor, big-endian codecs, TPKT/COTP and the
+# reverse-read and ByteArray.extract lemmas. Pinned to a main commit until
+# lean-s7 0.3.0 is released; then this moves to the tag.
+[[require]]
+name = "lean-s7"
+git = "https://github.com/gijzelaerr/lean-s7"
+rev = "69dbcb80c2e46dbd5ae75b7883c6a5df0894262f"
+
+[[lean_lib]]
+name = "LeanS7CommPlus"
+
+[[lean_exe]]
+name = "lean-s7commplus-tests"
+root = "Tests"
+
+[[lean_exe]]
+name = "lean-s7commplus-axioms"
+root = "AxiomAuditMain"

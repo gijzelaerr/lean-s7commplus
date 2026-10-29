@@ -1,7 +1,42 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: draft, 2026-10-29. Nothing is implemented yet. The open decisions at the
-end need owner review before phase 0 starts.
+Status: phase 0 done on 2026-10-29. Decision 3 is taken (plain V1 first);
+decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
+open.
+
+## Phase 0 results
+
+- **Skeleton.** A Lake project on Lean 4.33.1 with lean-s7 as a dependency, pinned
+  to lean-s7 `main` at `69dbcb8` until lean-s7 0.3.0 is released. `LeanS7CommPlus.Protocol`
+  holds the protocol id, frame versions, opcodes and the function codes the
+  Python client sends. CI builds and runs the tests and the axiom audit on Linux
+  and macOS; Windows is informational, as in lean-s7.
+- **Fixtures.** `fixtures/` holds two captures from real controllers, each with
+  device, firmware, source and capturer:
+  - a complete V1 SessionKey session on a CPU 1214C FW V4.2.2 (s7commplus#136):
+    InitSSL, CreateObject, SetupSession, the session activation, two reads and a
+    write the PLC rejects with a SystemEvent. It shows the V2 setup frame and the
+    V3/HMAC frames that follow;
+  - four GetMultiVariables replies with failing items from a CPU 1512SP-1 FW V2.9
+    (s7commplus#129).
+- **Decoder classification.** The Python decoders examined so far:
+
+| Python decoder | Class | Ignored or ambiguous input |
+| --- | --- | --- |
+| `codec.decode_header` | strict | none of the four header bytes; the version byte is passed through unchecked |
+| `vlq.decode_{uint,int}{32,64}_vlq` | lenient | overlong encodings: leading zero groups (`80 00` = `00` = 0), and for signed values redundant sign groups (`ff 7f` = `7f` = −1) |
+| `codec.decode_response_header` | lenient | the reserved words at offsets 1–2 and 5–6; the opcode is returned but not checked |
+| `codec.decode_wstring` | strict, but truncation-lenient | UTF-8 decoding is injective; a field shorter than `length` decodes the shorter string and still reports `length` bytes consumed |
+| `codec.decode_pvalue_to_bytes` | lossy | returns only the value bytes, not the flags or datatype; VLQ arrays are re-encoded minimally, which normalises overlong input; fixed-size reads slice and can silently come up short |
+| `codec.parse_create_object_session_id` | lenient prefix reader | a missing object-count byte reads as 0; no end-of-input check |
+| `codec.parse_create_object_attributes` | scanner | skips elements it does not recognise; stops silently on truncation |
+| `client._parse_read_response` | lenient | bytes after the error list (IntegrityId, fill) are unread; a special one-byte S7-1200 scalar shape is accepted |
+| `typeinfo`, `subscription`, `alarm`, `values` parsers | to classify | when their layer is ported (phases 2–3) |
+
+  The recurring pattern is **silent truncation**: Python slices return short
+  data instead of failing. The Lean decoders will reject truncated input, and the
+  differential fuzzer will report those cases as "Lean rejects"; that is an
+  intended divergence, not a bug in either.
 
 ## Goal
 
@@ -202,15 +237,17 @@ A capture qualifies only the conversation it shows, as in lean-s7's H1 gate.
 
 ## Open decisions for the owner
 
-1. **Depend on lean-s7?** A Lake dependency reuses `Binary`/`Cursor`, TPKT, COTP
-   and the reverse-read and `ByteArray.extract` lemmas from the canonical-decoding
-   work, and ties this repo to lean-s7's toolchain. Those lemmas landed after
-   lean-s7 0.2.0, so this either waits for a lean-s7 0.3.0 release or pins a
-   commit. The alternative is copying the few modules needed.
+1. **Depend on lean-s7?** *Provisional: yes, pinned to a commit.* A Lake
+   dependency reuses `Binary`/`Cursor`, TPKT, COTP and the reverse-read and
+   `ByteArray.extract` lemmas from the canonical-decoding work, and ties this repo
+   to lean-s7's toolchain. Those lemmas landed after lean-s7 0.2.0, so phase 0
+   pins lean-s7 `main` at `69dbcb8`; the pin moves to the 0.3.0 tag once that is
+   released. The alternative is copying the few modules needed.
 2. **Proof standard.** Require a canonical-form theorem (or proved leniency) for
    every decoder in the same PR that adds it, as lean-s7's plan now asks? That
    keeps the proofs current but slows the first live milestone.
-3. **Crypto and TLS.** Lean core has no SHA, HMAC, AES or TLS. Options:
+3. **Crypto and TLS.** *Decided 2026-10-29: plain V1 first; crypto is out of
+   scope for now.* Lean core has no SHA, HMAC, AES or TLS. Options for later:
    (a) pure-Lean implementations, checked only against known-answer vectors from
    the Python code; (b) FFI to a C library (OpenSSL or mbedTLS), which gives TLS
    too but adds a native dependency; (c) stop at plain V1 and keep crypto out of

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Windows is informational, as in lean-s7: the hosted runner has an intermittent
+    # libuv crash in Lean's runtime (gijzelaerr/lean-s7#58).
+    continue-on-error: ${{ matrix.experimental == true }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+          - os: windows-latest
+            experimental: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          build-args: LeanS7CommPlus lean-s7commplus-tests lean-s7commplus-axioms
+      - run: lake exe lean-s7commplus-tests
+      - run: lake exe lean-s7commplus-axioms
+      - name: Fixtures are valid JSON with even-length hex
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          for path in sorted(pathlib.Path("fixtures").glob("*.json")):
+              doc = json.loads(path.read_text(encoding="utf-8"))
+              for key in ("description", "device", "source"):
+                  assert key in doc, f"{path}: missing {key}"
+              for entry in doc.get("frames", []) + doc.get("replies", []):
+                  bytes.fromhex(entry["hex"])
+              print(f"{path}: ok")
+          PY

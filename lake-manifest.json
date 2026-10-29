@@ -1,0 +1,16 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/gijzelaerr/lean-s7",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "69dbcb80c2e46dbd5ae75b7883c6a5df0894262f",
+   "name": "«lean-s7»",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "69dbcb80c2e46dbd5ae75b7883c6a5df0894262f",
+   "inherited": false,
+   "configFile": "lakefile.toml"}],
+ "name": "«lean-s7commplus»",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}
