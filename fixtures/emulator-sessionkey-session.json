@@ -1,6 +1,11 @@
 {
   "description": "A V1 SessionKey session of the s7commplus client (master, 2026-10-29) against its emulator: InitSSL, CreateObject, SessionKey SetupSession, activation, protection-level read, read DB1.2..6, write DB1.0..2, read DB1.0..4, DeleteObject. The emulator is integration/sessionkey_emulator.py: public_key_fingerprint 01:BD426B091F08731A, session_challenge 00..13, session_key 00..17, max_response_pdu 8, and the ServerSessionVersion struct id as a 4-byte word as a real CPU 1214C sends it. The client's authenticator is patched to return an all-zero 180-byte blob and that session key, as s7commplus's own tests do. Each entry is one ISO data unit.",
+  "device": {
+    "emulator": "s7commplus S7CommPlusServer (master, 2026-10-29) via integration/sessionkey_emulator.py",
+    "note": "not a controller"
+  },
   "source": "Generated with s7commplus master and integration/sessionkey_emulator.py; see docs/plans/implementation.md, phase 7a.",
+  "captured_by": "the s7commplus client, recording each ISO data unit it sent and received",
   "frames": [
     {
       "label": "request function 0x05B3 (client-to-plc)",
