@@ -9,8 +9,9 @@ round trips, exact lengths, and canonical decoding.
 
 Plain V1 is done: codecs, sessions and a client that reads, writes and browses data
 blocks on the Python emulator, with whole and with fragmented replies. V3 integrity
-framing and IntegrityIds are proved relative to an abstract MAC. HMAC-SHA256, the
-SessionKey handshake and TLS wait for a decision on crypto (decision 3). The
+framing and IntegrityIds are proved relative to an abstract MAC and run with a
+pure-Lean HMAC-SHA256 that matches Python's `hashlib`. The SessionKey handshake (and so
+a live V3 session) and TLS are still open. The
 [implementation plan](docs/plans/implementation.md) describes the layers, the phases,
 the results, what remains, and the open decisions.
 
@@ -76,8 +77,14 @@ Implemented and proved so far:
   a chain (`ChainedMac`, with the independent and PLCSIM feed-forward dialects as
   instances). `openV3_sealV3` and `openFragments_sealFragments`: round trips.
   `sealV3_of_openV3` and `openFragments_sound`: an accepted frame or response is
-  exactly the seal of the data it yields. HMAC-SHA256 itself is not implemented
-  (decision 3).
+  exactly the seal of the data it yields.
+- **SHA-256 and HMAC-SHA256** (`LeanS7CommPlus.Sha256`), checked against Python's
+  `hashlib` and `hmac` on 48 known-answer vectors and RFC 4231. `Mac.hmacSha256` is the
+  V3 tag, and `ChainedMac.stateResume` the chaining of real S7-1200/1500 firmware.
+  All three chaining dialects seal a fragmented response byte for byte as the Python
+  emulator and verifier do. `stateResume_first_tag` and
+  `sealFragments_stateResume_single`: the chain starts with the standard HMAC. The
+  implementation is not proved equal to FIPS 180-4, and is not constant-time.
 - **IntegrityIds** (`LeanS7CommPlus.IntegrityId`): separate read and write counters, as
   in the Python client. `IntegrityCounters.next_read` and `IntegrityCounters.next_write`: a request uses
   and steps only its own counter. `IntegrityCounters.ids_consecutive` and `IntegrityCounters.ids_nodup`:

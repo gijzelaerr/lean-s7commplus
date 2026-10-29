@@ -1,5 +1,6 @@
 import LeanS7CommPlus.Fragments
 import LeanS7CommPlus.Message
+import LeanS7CommPlus.Sha256
 
 /-!
 # V3 frames over an abstract MAC
@@ -8,16 +9,16 @@ After SessionKey authentication every message travels in a V3 frame whose data i
 the integrity envelope: `0x20`, a 32-byte digest, and the message. The digest is
 HMAC-SHA256 of the message under the first 24 bytes of the session key.
 
-This module proves the framing correct relative to any MAC with 32-byte tags. The
-MAC itself (HMAC-SHA256) is not implemented here: computing it is open decision 3.
+This module proves the framing correct relative to any MAC with 32-byte tags, and
+instantiates it with HMAC-SHA256 from `LeanS7CommPlus.Sha256` (`Mac.hmacSha256`).
 
 A response split over several fragments carries one envelope per fragment, and the
 digests are chained. `ChainedMac` abstracts the chain as a state machine. Two of the
 dialects the Python client accepts are instances of it over a plain MAC:
 independent per-fragment HMACs and PLCSIM's feed-forward chain
-`HMAC(key, digest₍ₙ₋₁₎ ‖ fragmentₙ)`. The state-resume dialect of real S7-1200/1500
-firmware continues finalized SHA-256 states, so its instance needs SHA-256 internals
-and waits for decision 3 too.
+`HMAC(key, digest₍ₙ₋₁₎ ‖ fragmentₙ)`. The third, the state-resume dialect of real
+S7-1200/1500 firmware, continues the finalized inner and outer SHA-256 states of the
+HMAC (`ChainedMac.stateResume`).
 
 The theorems:
 
@@ -262,5 +263,63 @@ theorem sealFragments_feedForward_single (mac : Mac) (message : ByteArray) :
     sealFragments (ChainedMac.feedForward mac) [message] = sealV3 mac message := by
   simp [sealFragments, ChainedMac.protect, ChainedMac.feedForward, sealV3, encodeFragments_single,
     ByteArray.empty_append]
+
+/-! ## HMAC-SHA256 -/
+
+/-- HMAC-SHA256 under the first 24 bytes of the session key: the V3 tag. -/
+def Mac.hmacSha256 (sessionKey : ByteArray) : Mac where
+  tag message := Hmac.sha256 (sessionKey.extract 0 24) message
+  tag_size _ := Hmac.sha256_size _ _
+
+/-- The state-resume chain: the inner and outer SHA-256 states of the HMAC, and the
+    message bytes each has taken, counting the 64-byte pad. -/
+structure ResumeState where
+  inner : Sha256.State
+  outer : Sha256.State
+  innerCount : Nat
+  outerCount : Nat
+
+/-- The first fragment's inner and outer states: those of a standard HMAC. -/
+def ResumeState.first (key data : ByteArray) : ResumeState :=
+  let inner := Sha256.hashFrom Sha256.initial (Hmac.innerPad key ++ data) (64 + data.size)
+  let outer := Sha256.hashFrom Sha256.initial (Hmac.outerPad key ++ inner.digest) (64 + 32)
+  ⟨inner, outer, 64 + data.size, 64 + 32⟩
+
+/-- A later fragment resumes both finalized states: the inner hash continues over the
+    data, the outer over the new inner digest, each padded for its new bytes only. -/
+def ResumeState.continue (state : ResumeState) (data : ByteArray) : ResumeState :=
+  let innerCount := state.innerCount + data.size
+  let outerCount := state.outerCount + 32
+  let inner := Sha256.hashFrom state.inner data innerCount
+  let outer := Sha256.hashFrom state.outer inner.digest outerCount
+  ⟨inner, outer, innerCount, outerCount⟩
+
+/-- The state-resume dialect of S7-1200/1500 firmware, as the Python client's
+    `FragmentHMACVerifier` checks it and the emulator's `_protect_v3_fragments` makes
+    it. -/
+def ChainedMac.stateResume (sessionKey : ByteArray) : ChainedMac (Option ResumeState) where
+  start := none
+  next state data :=
+    let next := match state with
+      | none => ResumeState.first (sessionKey.extract 0 24) data
+      | some state => state.continue data
+    (next.outer.digest, some next)
+  tag_size _ _ := Sha256.State.digest_size _
+
+/-- The first tag of the state-resume chain is the standard HMAC. -/
+theorem stateResume_first_tag (sessionKey data : ByteArray) :
+    ((ChainedMac.stateResume sessionKey).next none data).1 = (Mac.hmacSha256 sessionKey).tag data := by
+  simp only [ChainedMac.stateResume, ResumeState.first, Mac.hmacSha256, Hmac.sha256, Sha256.hash,
+    ByteArray.size_append, Sha256.State.digest_size, Hmac.innerPad, Hmac.outerPad,
+    Hmac.xorPad_size]
+
+/-- So a response of one fragment is a single sealed frame under every dialect. -/
+theorem sealFragments_stateResume_single (sessionKey message : ByteArray) :
+    sealFragments (ChainedMac.stateResume sessionKey) [message] =
+      sealV3 (Mac.hmacSha256 sessionKey) message := by
+  have h := stateResume_first_tag sessionKey message
+  simp only [sealFragments, ChainedMac.protect, encodeFragments_single, sealV3] at h ⊢
+  rw [← h]
+  rfl
 
 end LeanS7CommPlus

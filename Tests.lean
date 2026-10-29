@@ -597,6 +597,108 @@ def testIntegrityIds : IO Unit := do
   | .ok (id, rest) => check (id == 128 && rest == bytes #[0xaa]) "leading IntegrityId"
   | .error _ => throw <| IO.userError "leading IntegrityId"
 
+/-- `hashlib.sha256` of the bytes `(7i + 3) mod 256` for each length. -/
+def sha256Vectors : List (Nat × String) := [
+  (0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+  (1, "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5"),
+  (3, "6ab0dba1f4f1dfbb37b4f9eeb092c09fca4900ad32bdcd147d8dde35d6c87c35"),
+  (55, "e7313d333c272e639f790978283f9eb392e843d0f29b7016828bb1daa4aac70b"),
+  (56, "4324d65f3c103567f5589c710bc08f8523f929a9272e3af36fc968e52abc6c27"),
+  (57, "35df609437dcfea3279283ab79fd554e2bf78f8f7ae2de532d8ee300b09e8f73"),
+  (63, "81c80242132f230c3bd41b3e63bbcff16107339549214a99614ff26664625055"),
+  (64, "39e3d7b6b5d075d37d053ad89b24b41bef4f3c29760c84447cab3f3be1882241"),
+  (65, "aacca6ff74fdbb296d165a45cecfa04e5127bc008770fbbdd48006f2d2fae95e"),
+  (119, "9ce7368e4daf32341631b492e80359dc9f594b48453cd0dd5bf0b19279cc177e"),
+  (120, "7836b787757e95e58b3ca5aec90b1b004e8deba1e50e9675af9cabf1a13a04b5"),
+  (127, "a8d23e75d936f303d248888d9b165ee543f4cbafcad3c9dd2a79bd84faa11d07"),
+  (128, "d2742f1f4ac6bb7ca2b239ee18402ba8b3f9f8e652d2a72973c2b9ba11c08cf6"),
+  (129, "307f8fc2c1622b92762e818d39a185d4d667ad49a4b07ceae1f4afa008a93ec4"),
+  (1000, "1e9bc38cbf860b9ec31918b065f9b52476c549a782e0e7990bed8ce3868d2371"),
+  (4097, "225270fa091dc75bf959a0e3bbcb897fc3ae8e7fa128ae1394cf5614e15505f5")]
+
+/-- `hmac.new(key, data, hashlib.sha256)` with key bytes `(13i + 1) mod 256`: key
+    length, data length, tag. -/
+def hmacVectors : List (Nat × Nat × String) := [
+  (0, 0, "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+  (0, 9, "e124f55f3d07e04717ad7b7db675dbb35ea4fa501b48e9880d6239c0a6899199"),
+  (0, 50, "509fa3ceb425b0a43e4e4605364b37201bffc0df9db6af17d8a688bfd31232b9"),
+  (0, 200, "bac72a73f232035f31901655f8a5d717056c6e6f02be452ebd700bc1efc44e2f"),
+  (1, 0, "2f8738164025afdddbc18665c6e8f37de9498db7fd194873c61ee30c22192a9a"),
+  (1, 9, "e2463d8ae37d307f71448a9269ea15f673253aa32343fcc426f544fde86aef9f"),
+  (1, 50, "b2347d2d14e0db92428e2603f1eb2daaf4fe46e30152fbe7596bb94dcea81830"),
+  (1, 200, "8219a0e1d0344387feb84030c33120d4b547b4b4b933f25b578419b5f691af9b"),
+  (20, 0, "758f010fedfb3115e9fc9874376a84d2934c45c3063f4c3fab08d314d01928f7"),
+  (20, 9, "9d1f59d932f10f44dd58c2f286ef94c23c4c7c4cf04127c6b72e4121080cc5a5"),
+  (20, 50, "2d3b1fbb64e96bcb880ea373bee4676db84986feb6e6f8c4c14964807c001317"),
+  (20, 200, "bd4ce02f47c48ccb088224ace8a7188366da31e3639994a1fb1f503601c42b67"),
+  (24, 0, "5129bd5a8224b15de4b2a36505f392c21e37e9ffbfa3a229d20c46f0b0bf3938"),
+  (24, 9, "c078ec0681ae35a4f4e53e425474d0b236dbc9a2ef94f04316e3ed343f370e2a"),
+  (24, 50, "05bdbb71c5aff04aa9889c85e56b3252d8f335e2bb6441e3ce96e29cc478b5c3"),
+  (24, 200, "7e84eedbefb78445e4b92b5a581d0f2fbcf7283103fc814ac6757d05a162f8b2"),
+  (32, 0, "cdb708c9bfa0038fba5a6852bbadf0371841c2671f7099d522774b649e2b76b5"),
+  (32, 9, "b8b7113ca0c88958f8ced4ab4a0317eb991697a8e12e61d37a7c1c3ffbed656c"),
+  (32, 50, "599500521c6072a46642a8584848122da0fd505edc05b58f19df6685b8785d8e"),
+  (32, 200, "7a50539e45ce1eb34422f27845e35168c8bcabf4b37c5c64c560a9d44d2ae2a9"),
+  (64, 0, "0efe5d996e675745a5070d8bb99b04f6746651c3a5e576e8d208ef599ea07c8a"),
+  (64, 9, "2685546ea9be0030a5228b7916ab8c43b4058abf795332b8688bd8a303640c9d"),
+  (64, 50, "2bb74f06e144e3d005e80db06f249e0a6dff0ae0afb0f50d9bf4a1763566d4a1"),
+  (64, 200, "d232dd37f1941d67ade5c2262346bfe9f1962506ad64ce786f4782d96defebe2"),
+  (65, 0, "0dc2b3e7b71039add7054f550b7815587ce8097d308e7922c4cbdb90d8d9ab8e"),
+  (65, 9, "e6fe26157f83986877fd67659c5d00d1980f42cc4610bbf73477ae1b21ed5402"),
+  (65, 50, "b7bfb090e4bb5ca0fa577759b79b96fdffe081739971bbcc0da2ee585ea9340e"),
+  (65, 200, "ded968ce3da7484c9efc09be99e613a14ca5c161dd93db054364dcfaf8b6d585"),
+  (131, 0, "66382efb3e4e2275d30239770268cff75aa1d9dc6ac2ba77912d2cb51eece9fe"),
+  (131, 9, "22294edf0980125a56995add842fffe78e74a0fc66fddfd27cafd448b179a06d"),
+  (131, 50, "ace5f8657a3b02599a5d4a2330f587a480bfba2331ea1db9216329a7bb51ac11"),
+  (131, 200, "2e2ea52836d230540424956442be701b2a3ebae941052195ad19e6dcf36080fb")]
+
+def vectorData (length : Nat) : ByteArray :=
+  ((List.range length).map fun i => UInt8.ofNat ((i * 7 + 3) % 256)).toByteArray
+
+def vectorKey (length : Nat) : ByteArray :=
+  ((List.range length).map fun i => UInt8.ofNat ((i * 13 + 1) % 256)).toByteArray
+
+def testSha256 : IO Unit := do
+  for (length, hex) in sha256Vectors do
+    check (toHex (Sha256.hash (vectorData length)) == hex) s!"SHA-256 of {length} bytes"
+  for (keyLength, length, hex) in hmacVectors do
+    check (toHex (Hmac.sha256 (vectorKey keyLength) (vectorData length)) == hex)
+      s!"HMAC-SHA256 with a {keyLength}-byte key over {length} bytes"
+  -- RFC 4231 test case 2.
+  check (toHex (Hmac.sha256 "Jefe".toUTF8 "what do ya want for nothing?".toUTF8) ==
+    "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843") "RFC 4231 case 2"
+
+/-- A 40-byte response split into 16-byte fragments under one session key, sealed in
+    each dialect: state-resume by the emulator's `_protect_v3_fragments`, the others
+    as the Python `FragmentHMACVerifier` checks them. The verifier accepts all three. -/
+def dialectVectors : List (String × String) := [
+  ("state-resume", "72030031200e321eca8a29d4e737788060959a94d26632a19c5ab0ea2a5e6e13d63b9cb572030a11181f262d343b424950575e656c7203003120c87325f19a252abef1d116f544ae6a8a86ddc4c02f01b8e014b4109ee0adf6e5737a81888f969da4abb2b9c0c7ced5dc72030029208e145dac1e40106573e55d4d4aa5f65457f5891ba6637575692f8ef876fda855e3eaf1f8ff060d1472030000"),
+  ("independent", "72030031200e321eca8a29d4e737788060959a94d26632a19c5ab0ea2a5e6e13d63b9cb572030a11181f262d343b424950575e656c72030031203b8655580e14316c5619e0fc190c36d3f6fc6843610c901768567cbca41daa25737a81888f969da4abb2b9c0c7ced5dc720300292025b061a9cc376479ce1c3db251f7dd473f5b5103cdee0cf8828fd688b15dcbcee3eaf1f8ff060d1472030000"),
+  ("feed-forward", "72030031200e321eca8a29d4e737788060959a94d26632a19c5ab0ea2a5e6e13d63b9cb572030a11181f262d343b424950575e656c7203003120279f34b2ca8ae57f27d3bc3f23360af16728952637caba6e8759ae95aaf0faee737a81888f969da4abb2b9c0c7ced5dc7203002920f8d2c9ab9fffa45de31742ef2a91f564b1d614d1d8eca8ff00376a2a16ac0d26e3eaf1f8ff060d1472030000")]
+
+def testHmacDialects : IO Unit := do
+  let key := ((List.range 32).map fun i => UInt8.ofNat ((i * 5 + 11) % 256)).toByteArray
+  let data := vectorData 40
+  let pieces := splitData 16 data
+  let sealed : List (String × ByteArray × (ByteArray → Bool)) := [
+    ("state-resume", sealFragments (.stateResume key) pieces,
+      fun m => match openFragments (.stateResume key) m with | .ok d => d == data | .error _ => false),
+    ("independent", sealFragments (.independent (.hmacSha256 key)) pieces,
+      fun m => match openFragments (.independent (.hmacSha256 key)) m with | .ok d => d == data | .error _ => false),
+    ("feed-forward", sealFragments (.feedForward (.hmacSha256 key)) pieces,
+      fun m => match openFragments (.feedForward (.hmacSha256 key)) m with | .ok d => d == data | .error _ => false)]
+  for ((label, mine, opens), (label', hex)) in sealed.zip dialectVectors do
+    check (label == label') "dialect order"
+    check (toHex mine == hex) s!"{label}: sealed like the Python implementation"
+    check (opens (hexBytes hex)) s!"{label}: Python's frames open"
+    check (!opens (flipByte (hexBytes hex) 60)) s!"{label}: changed byte refused"
+  -- The state-resume frames are not valid in another dialect.
+  check (openFragments (.independent (.hmacSha256 key)) (hexBytes dialectVectors[0]!.2)).toBool.not
+    "state-resume frames refused as independent"
+  -- A single V3 frame with HMAC-SHA256.
+  let message := hexBytes "31000004f2000000050000000134000000"
+  check (openV3 (.hmacSha256 key) (sealV3 (.hmacSha256 key) message) |>.toBool) "HMAC-SHA256 V3 frame"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -620,4 +722,6 @@ def main : IO Unit := do
   testFragments
   testIntegrity
   testIntegrityIds
+  testSha256
+  testHmacDialects
   IO.println "All lean-s7commplus tests passed."
