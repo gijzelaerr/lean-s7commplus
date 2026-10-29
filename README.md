@@ -49,6 +49,14 @@ Implemented and proved so far:
   turns a read reply into one value or error per requested item, and
   `ReadReply.results_spec` proves it sound: one result per item, a value only from the
   value list with no error for that item, an error only from the error list.
+- **Plain V1 sessions and a client** (`LeanS7CommPlus.Session`, `LeanS7CommPlus.Client`):
+  the session requests (InitSSL, CreateObject, SetupSession, reads, writes, EXPLORE),
+  byte for byte those of the Python client, and the state machine that orders them.
+  `Session.send_spec`, `Session.receive_spec`, `Phase.after_spec` and
+  `Session.ready_only_after_setup`: requests go out only in their phase with increasing
+  sequence numbers, a reply is accepted only if it answers the outstanding request, and
+  data requests need a completed SetupSession. `lean-s7commplus-cli` connects to the
+  Python emulator and reads, writes and browses data blocks.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
@@ -56,6 +64,14 @@ Implemented and proved so far:
 Every frame of a real CPU 1214C V4.2.2 session (`fixtures/`) decodes and
 re-encodes byte for byte, and the VLQ encoders match the Python reference on
 boundary values.
+
+`integration/run.py` runs the Lean client against the Python s7commplus emulator, and
+`integration/fuzz.py` compares the Lean decoders with the Python ones on mutated input.
+
+```console
+lake build lean-s7commplus-cli
+lake exe lean-s7commplus-cli 127.0.0.1 PORT read 1 0 4
+```
 
 Do not connect this software to production equipment.
 

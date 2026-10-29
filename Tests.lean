@@ -424,6 +424,52 @@ def testPartialFailureResults : IO Unit := do
   let unanswered : ReadReply := { returnValue := 0, values := [(1, .scalar (.usint 1))], errors := [] }
   check (unanswered.results 2 matches .error _) "unanswered item"
 
+/-- The session's request frames are byte for byte those of the Python client: the
+    CreateObject of the CPU 1214C capture, and the plain V1 conversation with the Python
+    emulator (session id 1). -/
+def testSessionRequests : IO Unit := do
+  let frameOf (session : Session) (request : Request) : IO ByteArray :=
+    match session.send request with
+    | some (frame, _, _) => pure frame
+    | none => throw <| IO.userError "request not allowed in this phase"
+  check (toHex (← frameOf Session.initial .initSsl) ==
+    "72010012310000 05b300000000000000003000000000720100 00".replace " " "") "InitSSL frame"
+  let some (_, _, createHex) := sessionFrames.find? (fun (l, _, _) => l == "CreateObject (client-to-plc)")
+    | throw <| IO.userError "missing CreateObject fixture"
+  let probed : Session := { Session.initial with phase := .sslProbed, sequence := 1 }
+  check (toHex (← frameOf probed .createObject) == createHex) "CreateObject frame"
+  let created : Session := { phase := .created, sessionId := 1, sequence := 2 }
+  check (toHex (← frameOf created (.setupSession (hexBytes "000401"))) ==
+    "72020038310000054200000002000000013400000001010182320100040100000004e88969001200000000896a0013" ++
+    "00896b000400000000000000007202" ++ "0000") "SetupSession frame"
+  let ready (sequence : UInt16) : Session := { phase := .ready, sessionId := 1, sequence }
+  let readRequest : ReadRequest := { addresses := [ItemAddress.db 1 2 4], form := .fixed, keyQualifier := 0 }
+  check (toHex (← frameOf (ready 4) (.read readRequest)) ==
+    "7201003d310000054c00000004000000013400000000010700 88d0b88001049376030204000004e88969001200000000896a001300896b000400000000000000007201 0000".replace " " "")
+    "read frame"
+  let writeRequest : WriteRequest :=
+    { addresses := [ItemAddress.db 1 0 2], values := [.scalar (.blob 0 (hexBytes "aabb"))], form := .fixed, keyQualifier := 0 }
+  check (toHex (← frameOf (ready 5) (.write writeRequest)) ==
+    "72010045310000054200000005000000013400000000010700 88d0b88001049376030002010014000 2aabb00000004e88969001200000000896a001300896b000400000000000000007201 0000".replace " " "")
+    "write frame"
+  check (toHex (← frameOf (ready 7) (.explore ObjectId.thePlcProgram
+      [AttributeId.objectVariableTypeName, AttributeId.blockNumber])) ==
+    "72010021310000 04bb000000070000000134000000030001010000028169935900000000007201 0000".replace " " "")
+    "explore frame"
+  -- Requests out of phase are refused.
+  check (Session.initial.send .createObject).isNone "CreateObject before InitSSL"
+  check (created.send (.read { addresses := [], form := .fixed, keyQualifier := 0 })).isNone
+    "read before SetupSession"
+  -- The emulator's CreateObject reply: session id 1 and the last attribute 306.
+  match decodeFrame (hexBytes "7201002c32000004ca0000000100000101a100000001000000a38231000401a38232000201a38232000401a20000000072010000") with
+  | .error error => throw <| IO.userError s!"emulator CreateObject frame: {repr error}"
+  | .ok (_, data) =>
+    match decodeCreateObjectReply (data.extract 10 data.size) with
+    | .error error => throw <| IO.userError s!"emulator CreateObject reply: {repr error}"
+    | .ok reply =>
+      check (reply.sessionId == 1) "emulator session id"
+      check (toHex reply.serverSessionVersion == "000401") "emulator ServerSessionVersion"
+
 def testSessionFrames : IO Unit := do
   for (label, version, hex) in sessionFrames do
     let frame := hexBytes hex
@@ -461,5 +507,6 @@ def main : IO Unit := do
   testPartialFailureReplies
   testFixtureWrite
   testPartialFailureResults
+  testSessionRequests
   testFrameRejections
   IO.println "All lean-s7commplus tests passed."

@@ -20,3 +20,11 @@ root = "Tests"
 [[lean_exe]]
 name = "lean-s7commplus-axioms"
 root = "AxiomAuditMain"
+
+[[lean_exe]]
+name = "lean-s7commplus-cli"
+root = "CliMain"
+
+[[lean_exe]]
+name = "lean-s7commplus-decode"
+root = "DecodeMain"
