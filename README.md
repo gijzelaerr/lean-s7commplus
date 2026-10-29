@@ -7,8 +7,24 @@ round trips, exact lengths, and canonical decoding.
 
 ## Status
 
-Planning. There is no code yet. The [implementation plan](docs/plans/implementation.md)
-describes the layers, the phases, what will be proved, and the open decisions.
+Early. The [implementation plan](docs/plans/implementation.md) describes the
+layers, the phases, what will be proved, and the open decisions.
+
+Implemented and proved so far:
+
+- **Unsigned VLQ** (`LeanS7CommPlus.Vlq`). `Vlq.decodeUInt32_encodeUInt32` and
+  `Vlq.decodeUInt64_encodeUInt64`: decoding the encoding of any value, inside
+  arbitrary surrounding bytes, returns it and consumes exactly its encoding.
+  `Vlq.encodeUInt32_size` and `Vlq.encodeUInt64_size`: one to five and one to nine
+  bytes. `Vlq.decodeUInt32_canonical`: the only non-minimal input the decoder
+  accepts is the minimal encoding preceded by `0x80` bytes (leading zero groups).
+- **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
+  `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
+  decoded version and data.
+
+Every frame of a real CPU 1214C V4.2.2 session (`fixtures/`) decodes and
+re-encodes byte for byte, and the VLQ encoders match the Python reference on
+boundary values.
 
 Do not connect this software to production equipment.
 

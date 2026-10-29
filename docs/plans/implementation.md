@@ -1,8 +1,37 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phase 0 done on 2026-10-29. Decision 3 is taken (plain V1 first);
+Status: phase 0 and the unsigned half of phase 1 done on 2026-10-29. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 1 results (unsigned VLQ and frames)
+
+The pilot covers the unsigned VLQ widths and complete frames. Signed VLQ follows
+in its own PR.
+
+- **Unsigned 32- and 64-bit VLQ** (`LeanS7CommPlus.Vlq`): encoders that match the
+  Python reference byte for byte (known-answer tests on boundary values, including
+  the nine-byte 64-bit form for values of 2^56 and above), decoders, and theorems:
+  round trip inside arbitrary surrounding bytes for both widths, encoded size
+  bounds, and a canonical-form theorem for 32 bits: the only non-minimal input the
+  decoder accepts is the minimal encoding preceded by `0x80` bytes.
+- **Frames** (`LeanS7CommPlus.Frame`): strict decoding of a complete frame
+  (header, data, trailer with the same version and a zero word, nothing after it),
+  with a round trip and a canonical-form theorem. All 13 complete frames of the
+  CPU 1214C session in `fixtures/` decode and re-encode byte for byte: V1 for
+  InitSSL and CreateObject, V2 for SetupSession, V3 for everything after it.
+- **Divergences from the Python decoders**, found while porting and kept as
+  intended (decision 4 keeps only the overlong-encoding leniency):
+  - `decode_uint32_vlq` returns values that do not fit 32 bits: `ff ff ff ff 7f`
+    gives 2^35 − 1. The Lean decoder rejects it.
+  - `decode_uint32_vlq` stops after five bytes and ignores a continuation flag on
+    the fifth: `80 80 80 80 80` gives 0. The Lean decoder rejects it.
+  - `decode_int32_vlq` returns values outside the int32 range: `8f ff ff ff 7f`
+    gives 4294967295. To be handled with the signed decoders.
+- **Effort.** The proof style from lean-s7 carried over unchanged: the cursor
+  append lemmas give the round trips by induction over the group list, and the
+  reverse-read lemmas give the canonical forms. Each codec took a few build
+  iterations, mostly offset arithmetic.
 
 ## Phase 0 results
 
