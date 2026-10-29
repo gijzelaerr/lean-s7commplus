@@ -74,6 +74,13 @@ Implemented and proved so far:
   `sealV3_of_openV3` and `openFragments_sound`: an accepted frame or response is
   exactly the seal of the data it yields. HMAC-SHA256 itself is not implemented
   (decision 3).
+- **IntegrityIds** (`LeanS7CommPlus.IntegrityId`): separate read and write counters, as
+  in the Python client. `IntegrityCounters.next_read` and `IntegrityCounters.next_write`: a request uses
+  and steps only its own counter. `IntegrityCounters.ids_consecutive` and `IntegrityCounters.ids_nodup`:
+  the requests of one kind get consecutive ids, none repeated within 2³² of them.
+  `ReadRequest.encode_insert` and `WriteRequest.encode_insert`: the request encoders
+  place the id before the four fill bytes. The response position is a named parameter
+  (`ResponseIntegrity`), with round trips for the leading and trailing forms.
 
 Every frame of a real CPU 1214C V4.2.2 session (`fixtures/`) decodes and
 re-encodes byte for byte, and the VLQ encoders match the Python reference on

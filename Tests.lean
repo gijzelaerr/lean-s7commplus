@@ -568,6 +568,35 @@ def testIntegrity : IO Unit := do
     check (openFragments (.feedForward toyMac) swapped).toBool.not "feed-forward: swapped fragments refused"
   | .error _ => throw <| IO.userError "feed-forward fragments rejected"
 
+def testIntegrityIds : IO Unit := do
+  -- Reads and writes step separate counters.
+  let functions : List UInt16 := [0x054c, 0x0542, 0x054c, 0x04bb, 0x04f2, 0x0586]
+  let (ids, counters) := ({} : IntegrityCounters).run functions
+  check (ids.map (·.2) == [0, 0, 1, 2, 1, 3]) s!"IntegrityIds {ids.map (·.2)}"
+  check (counters == { read := 4, write := 2 }) "counters after the run"
+  -- The counters wrap modulo 2^32.
+  let (id, wrapped) := ({ read := 0xffffffff } : IntegrityCounters).next 0x054c
+  check (id == 0xffffffff && wrapped.read == 0) "read counter wraps"
+  -- The read and write requests of the CPU 1214C session carry their id before the fill.
+  let request ← fixtureMessage "request function 0x054C (client-to-plc)"
+  let payload := request.extract 14 request.size
+  match decodeReadRequest .vlq true payload with
+  | .ok (decoded, some id) =>
+    check (insertIntegrityId (decoded.encode none) 4 id == payload) "read request IntegrityId placement"
+  | _ => throw <| IO.userError "read request"
+  -- Its GetMultiVariables reply carries IntegrityId 7 after the body, before four fill bytes.
+  let reply ← fixtureMessage "response function 0x054C (plc-to-client)"
+  let replyPayload := reply.extract 10 reply.size
+  match decodeReadReply { data := replyPayload } with
+  | .ok (_, next) =>
+    check (match decodeTrailingIntegrityId 4 next with | .ok id => id == 7 | .error _ => false)
+      "trailing IntegrityId of the read reply"
+    check (decodeTrailingIntegrityId 3 next).toBool.not "wrong fill length refused"
+  | .error _ => throw <| IO.userError "read reply"
+  match decodeLeadingIntegrityId (hexBytes "8100aa") with
+  | .ok (id, rest) => check (id == 128 && rest == bytes #[0xaa]) "leading IntegrityId"
+  | .error _ => throw <| IO.userError "leading IntegrityId"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -590,4 +619,5 @@ def main : IO Unit := do
   testFrameRejections
   testFragments
   testIntegrity
+  testIntegrityIds
   IO.println "All lean-s7commplus tests passed."

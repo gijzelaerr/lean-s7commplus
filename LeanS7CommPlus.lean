@@ -10,5 +10,6 @@ import LeanS7CommPlus.Message
 import LeanS7CommPlus.Integrity
 import LeanS7CommPlus.Access
 import LeanS7CommPlus.Write
+import LeanS7CommPlus.IntegrityId
 import LeanS7CommPlus.Session
 import LeanS7CommPlus.Client

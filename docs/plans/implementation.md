@@ -1,9 +1,33 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–4 done on 2026-10-29; phase 5 in progress (fragment reassembly and V3 framing over an abstract MAC done). Phase 2 does not yet cover VLQ arrays, packed
+Status: phases 0–4 done on 2026-10-29; phase 5 done as far as decision 3 allows (fragment reassembly, V3 framing over an abstract MAC, IntegrityIds); its crypto steps wait for decision 3. Phase 2 does not yet cover VLQ arrays, packed
 structs or the EXPLORE elements; phase 3 covers reads and writes of DB regions. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 5c results (IntegrityIds)
+
+- **Counters** (`LeanS7CommPlus.IntegrityId`): a read counter for the Python client's
+  `READ_FUNCTION_CODES` (GetMultiVariables, EXPLORE, GetVarSubstreamed, GetLink,
+  GetVariable, GetVariablesAddress) and a write counter for every other function. A
+  request carries its counter's value, which then steps by one modulo 2³².
+  Theorems: `IntegrityCounters.next_read`, `next_write`, `run_counters`,
+  `ids_consecutive`, `ids_nodup` (no id repeats within 2³² requests of a kind).
+- **Request placement.** `insertIntegrityId` puts the id before the last `tail` bytes,
+  as the Python client's `integrity_tail` does. `ReadRequest.encode_insert` and
+  `WriteRequest.encode_insert` show that the phase 3 encoders do exactly that with four
+  fill bytes, so their round trips cover requests with an id.
+- **Response position** (`ResponseIntegrity`: none, leading, or trailing before `tail`
+  fill bytes) is a controller fact, kept as a named parameter.
+  `decodeLeadingIntegrityId_encode` and `decodeTrailingIntegrityId_encode` are the
+  round trips. The CPU 1214C capture (s7commplus#136) shows the trailing form on the
+  GetMultiVariables reply (id 7, then four zero bytes). For SetVariable (`00 06` then
+  four zero bytes) and GetVarSubstreamed the capture alone does not say which VLQ is
+  the IntegrityId; the Python client strips a leading one. Those positions wait for
+  more captures.
+- **Not modelled.** The S7-1200 skip of one id on both counters after legitimation,
+  and the per-family request tails of the SessionKey handshake (`_v1_integrity_tail`),
+  which belong with the SessionKey work (decision 3).
 
 ## Phase 5b results (V3 framing over an abstract MAC)
 
