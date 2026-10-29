@@ -7,8 +7,12 @@ round trips, exact lengths, and canonical decoding.
 
 ## Status
 
-Early. The [implementation plan](docs/plans/implementation.md) describes the
-layers, the phases, what will be proved, and the open decisions.
+Plain V1 is done: codecs, sessions and a client that reads, writes and browses data
+blocks on the Python emulator, with whole and with fragmented replies. V3 integrity
+framing and IntegrityIds are proved relative to an abstract MAC. HMAC-SHA256, the
+SessionKey handshake and TLS wait for a decision on crypto (decision 3). The
+[implementation plan](docs/plans/implementation.md) describes the layers, the phases,
+the results, what remains, and the open decisions.
 
 Implemented and proved so far:
 
