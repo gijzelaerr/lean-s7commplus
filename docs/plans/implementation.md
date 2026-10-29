@@ -2,10 +2,39 @@
 
 Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256 and
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
-Phase 7, the V1 SessionKey handshake: 7a (wire layer and a live keyed session), 7b (key
-derivation), 7c (the blob) and 7d (legitimation) are done; 7e (renewal) and the
-optional 7f (PLCSIM) follow. Decision 1 is provisional (lean-s7 pinned to a commit).
-The other decisions are open.
+Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
+PLCSIM's family 03, is optional and waits for the owner. Decision 1 is provisional
+(lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 7e results (key renewal)
+
+- **Messages.** The renewal is two requests under the old key:
+  - the address-303 challenge read, as in the legitimation;
+  - a SetVariable of a new SecurityKey to address 1830 (`Request.renewSessionKey`,
+    `setVariablePayload`, s7commplus `_build_set_variable_payload`).
+  In a recorded s7commplus renewal (key2 given, the other draws recorded), both frames
+  re-encode byte for byte, and the counters carry on from the session (read 2, write 2).
+- **Installing the key** (`Keyed.finishRenewal`). The new key is installed only when
+  the reply opens under the old key, has the SetVariable function, and has no sign bit
+  in the low 16 bits of its return value. Otherwise the client closes the connection.
+  Theorems:
+  - `Keyed.finishRenewal_spec`: an installed key came from a reply that opened under
+    the old key and accepted the write, and the counters are unchanged.
+  - `Keyed.finishRenewal_unopened`: a reply that does not open never installs a key.
+  Tests: an accepting reply installs the key; a refusing reply, an altered reply and
+  the generic error frame do not.
+- **Client.** `Client.renewSessionKey` runs one renewal; the CLI's `--renew` renews
+  once after connecting. There is no timer: s7commplus renews every 25 minutes, and the
+  Lean client is one-shot.
+- **Live, as a refusal.** The emulator implements no SetVariable: it answers the
+  activation and the renewal with the generic error frame. So the live check is that
+  the Lean client reads the challenge, writes the new SecurityKey, refuses that error
+  reply, and closes; `integration/run.py` checks this.
+- **Finding, not reported upstream.** s7commplus `_check_set_variable_response`
+  accepts that generic error frame as a successful renewal, because the error code
+  (0x04b1) has no sign bit. It then installs a new session key the controller never
+  accepted. A real controller answering SetVariable with the error function would hit
+  the same path.
 
 ## Phase 7d results (legitimation)
 
@@ -185,9 +214,13 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Planned (phase 7e–7f):** key renewal and optionally PLCSIM; see "Phase 7" below.
-7a (the wire layer and a live keyed session), 7b (key derivation), 7c (the blob) and
-7d (legitimation) are done.
+**Optional (phase 7f):** PLCSIM's key family 03 (a 216-byte blob, an AES-GCM
+legitimation answer, and its own request layouts), only if wanted. Phase 7 (7a–7e) is
+done for families 00 and 01.
+
+**Not checked against hardware:** no real controller has yet decrypted a Lean-built
+blob or checked a Lean-built legitimation answer; the known-answer agreement with
+s7commplus is the evidence.
 
 **Out of scope:** TLS for V2 (phase 6).
 

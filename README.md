@@ -12,9 +12,9 @@ blocks on the Python emulator, with whole and with fragmented replies. V3 integr
 framing and IntegrityIds are proved relative to an abstract MAC and run with a
 pure-Lean HMAC-SHA256 that matches Python's `hashlib`. The V1 SessionKey handshake is
 implemented: the client builds the encrypted blob, derives the session key and
-legitimates with a password, and the session runs live against the emulator. Key
-renewal (phase 7e) and TLS are still open, and no real controller has yet checked a
-Lean-built blob or answer. The
+legitimates with a password, renews the key, and the session runs live against the
+emulator. TLS and PLCSIM's key family are not supported, and no real controller has
+yet checked a Lean-built blob or answer. The
 [implementation plan](docs/plans/implementation.md) describes the layers, the phases,
 the results, what remains, and the open decisions.
 
@@ -92,6 +92,11 @@ Implemented and proved so far:
   session with the password `secret`, the Lean setup (with a Lean-built blob),
   challenge read and answer frames equal Python's byte for byte. `--password PW`
   legitimates a session.
+- **Key renewal** (`Client.renewSessionKey`, `Keyed.finishRenewal`): a new SecurityKey
+  written with SetVariable under the old key. `Keyed.finishRenewal_spec` and
+  `Keyed.finishRenewal_unopened`: the new key is installed only once the reply opens
+  under the old key and accepts the write; the counters carry on. The renewal frames of
+  a recorded s7commplus renewal re-encode byte for byte.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.

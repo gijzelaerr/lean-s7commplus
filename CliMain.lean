@@ -11,7 +11,7 @@ With `--sessionkey` first, the client opens a V1 SessionKey session. With
 `--test-key2 HEX` instead, it does the same but uses that key2 rather than a random one,
 so that the session key matches the one the emulator is configured with; everything
 else in the blob is drawn at random. `--password PW` after either legitimates the
-session with that password.
+session with that password, and `--renew` renews the session key once after connecting.
 -/
 
 open LeanS7 LeanS7CommPlus
@@ -37,7 +37,7 @@ def toHex (data : ByteArray) : String :=
     String.ofList (if digits.length == 1 then '0' :: digits else digits))
 
 def usage : String :=
-  "usage: lean-s7commplus-cli [--sessionkey | --test-key2 HEX] [--password PW] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
+  "usage: lean-s7commplus-cli [--sessionkey | --test-key2 HEX] [--password PW] [--renew] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
 
 def run (args : List String) : IO UInt32 := do
   let (mode, args) : Option (Option ByteArray) × List String := match args with
@@ -47,12 +47,16 @@ def run (args : List String) : IO UInt32 := do
   let (password, args) : Option String × List String := match args with
     | "--password" :: password :: rest => (some password, rest)
     | _ => (none, args)
+  let (renew, args) := match args with
+    | "--renew" :: rest => (true, rest)
+    | _ => (false, args)
   match args with
   | host :: portText :: command => do
     let some port := portText.toNat? | IO.eprintln usage; return 2
     let client ← match mode with
       | some testKey2 => Client.connectSessionKey host (UInt16.ofNat port) testKey2 password
       | none => Client.connect host (UInt16.ofNat port)
+    let client ← if renew then client.renewSessionKey (mode.bind id) else pure client
     match command with
     | ["read", db, start, size] =>
       let (some db, some start, some size) := (db.toNat?, start.toNat?, size.toNat?)
