@@ -1,9 +1,40 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–3 done on 2026-10-29. Phase 2 does not yet cover VLQ arrays, packed
+Status: phases 0–4 done on 2026-10-29. Phase 2 does not yet cover VLQ arrays, packed
 structs or the EXPLORE elements; phase 3 covers reads and writes of DB regions. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 4 results (plain V1 against the emulator)
+
+- **Session** (`LeanS7CommPlus.Session`): the requests of a plain V1 session, byte for
+  byte those of the Python client: InitSSL, CreateObject (the ServerSession object
+  tree, built from tree items), SetupSession (SetMultiVariables on the session object,
+  in a V2 frame, echoing attribute 306), GetMultiVariables, SetMultiVariables and
+  EXPLORE. The emulator sends attribute 306 twice; like the Python client, the last
+  one is echoed.
+- **State machine.** `Session.send` allows a request only in its phase and stamps it
+  with the next sequence number; `Session.receive` accepts a reply only if it answers
+  the outstanding request (sequence number, and function or the generic error
+  function; InitSSL's function is not checked, as real PLCs answer it with ERROR2).
+  Theorems: `Session.send_spec`, `Session.receive_spec`, `Phase.after_spec`,
+  `Session.ready_only_after_setup`.
+- **Client and CLI** (`LeanS7CommPlus.Client`, `lean-s7commplus-cli`): COTP with the
+  S7CommPlus TSAPs (the called TSAP `SIMATIC-ROOT-HMI` needs a connection request
+  that lean-s7's 2-byte TSAP encoder cannot express), then lean-s7's TPKT and COTP
+  data transport. Connect, read, write and browse data blocks.
+- **Integration** (`integration/run.py`, in CI against s7commplus 0.3.0 from PyPI):
+  reads, writes, browsing and a missing-DB read against the Python emulator, and a
+  cross-check with the Python client in both directions. s7commplus 0.3.0 sends the
+  browsed data blocks as consecutive top-level objects, `master` wraps them in
+  thePLCProgram; the client reads both.
+- **Differential fuzzer** (`integration/fuzz.py`, `lean-s7commplus-decode`): mutated VLQ
+  and PValue encodings decoded by both. 3599 inputs: no input that both accept with
+  different results, none that only Python rejects; the Lean-only rejections are the
+  intended strictness (out-of-range VLQs, truncated values, arrays).
+- **Python finding.** The emulator answers the protection-level query
+  (GetVarSubstreamed) with a USINT array, and the Python client logs it as malformed
+  ("expected a scalar UDInt"). The Lean client does not send that query.
 
 ## Phase 3c results (SetMultiVariables and per-item read results)
 

@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
         with:
-          build-args: LeanS7CommPlus lean-s7commplus-tests lean-s7commplus-axioms
+          build-args: LeanS7CommPlus lean-s7commplus-tests lean-s7commplus-axioms lean-s7commplus-cli lean-s7commplus-decode
       - run: lake exe lean-s7commplus-tests
       - run: lake exe lean-s7commplus-axioms
       - name: Fixtures are valid JSON with even-length hex
@@ -45,3 +45,11 @@ jobs:
                   bytes.fromhex(entry["hex"])
               print(f"{path}: ok")
           PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install "s7commplus==0.3.0"
+      - name: Lean client against the Python emulator
+        run: python integration/run.py
+      - name: Differential fuzzer against the Python decoders
+        run: python integration/fuzz.py

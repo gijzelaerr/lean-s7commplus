@@ -12,6 +12,8 @@ owner's decisions.
 - `AxiomAuditMain.lean`: fails if a project theorem depends on anything beyond
   `propext`, `Classical.choice` and `Quot.sound`, or if the README cites a theorem
   that does not exist (`lean-s7commplus-axioms`).
+- `CliMain.lean`, `DecodeMain.lean`: the command-line client and the decoder oracle used by
+  `integration/run.py` and `integration/fuzz.py`.
 - `fixtures/`: frames and replies from real controllers, each file with the
   device, firmware, source URL and who captured it.
 - Dependency: [lean-s7](https://github.com/gijzelaerr/lean-s7) for the byte cursor,
@@ -21,9 +23,12 @@ owner's decisions.
 ## Required checks
 
 ```console
-lake build LeanS7CommPlus lean-s7commplus-tests lean-s7commplus-axioms
+lake build LeanS7CommPlus lean-s7commplus-tests lean-s7commplus-axioms lean-s7commplus-cli lean-s7commplus-decode
 lake exe lean-s7commplus-tests
 lake exe lean-s7commplus-axioms
+python -m pip install "s7commplus==0.3.0"
+python integration/run.py     # the Lean client against the Python emulator
+python integration/fuzz.py    # differential fuzzer; accept-different must be 0
 ```
 
 ## Conventions
