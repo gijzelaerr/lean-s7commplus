@@ -30,7 +30,7 @@ PLCSIM's family 03, is optional and waits for the owner. Decision 1 is provision
   activation and the renewal with the generic error frame. So the live check is that
   the Lean client reads the challenge, writes the new SecurityKey, refuses that error
   reply, and closes; `integration/run.py` checks this.
-- **Finding, not reported upstream.** s7commplus `_check_set_variable_response`
+- **Finding, reported as s7commplus#152.** s7commplus `_check_set_variable_response`
   accepts that generic error frame as a successful renewal, because the error code
   (0x04b1) has no sign bit. It then installs a new session key the controller never
   accepted. A real controller answering SetVariable with the error function would hit
