@@ -4,6 +4,26 @@ Status: phases 0–2 and the headers of phase 3 done on 2026-10-29 (phase 2 with
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
 
+## Phase 3b results (GetMultiVariables)
+
+- **`LeanS7CommPlus.Access`**: item addresses (symbol CRC, access area, id count,
+  sub-area, LIDs), the object qualifier in its fixed (`00 04` + word) and VLQ
+  (`00 04` + VLQ + `00`) forms, the GetMultiVariables request payload (zero word,
+  item count, field count, addresses, qualifier, fill) with the request IntegrityId
+  spliced in before the fill, and the reply (return value, value list, error list).
+- **Theorems.** Round trips for VLQ lists, addresses, the qualifier (both forms), the
+  request body, the complete request payload with and without an IntegrityId
+  (`decodeReadRequest_encode`), and the reply (`decodeReadReply_encode`).
+- **Evidence.** The CPU 1214C read request decodes to one address (DB1, offset 0,
+  one byte) with IntegrityId 2 and re-encodes byte for byte; it uses the VLQ
+  qualifier form although the session is V1, as the Python client does on its data
+  paths. Its reply decodes to the value 42 (a BLOB), followed by the PLC's
+  IntegrityId and fill. The four S7-1500 partial-failure replies decode with their
+  nonzero return value and re-encode exactly; a missing DB is answered with both a
+  NULL value and an error for the same item (gijzelaerr/s7commplus#130).
+- **Next:** SetMultiVariables, the per-item result semantics of #129 and #130 as
+  theorems, and the response IntegrityId position as a per-family parameter.
+
 ## Phase 3a results (headers and the integrity envelope)
 
 - **`LeanS7CommPlus.Message`**: the request header (opcode `0x31`, reserved word,

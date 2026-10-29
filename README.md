@@ -38,6 +38,11 @@ Implemented and proved so far:
   forms: `decodeRequestHeader_canonical` and `decodeResponseHeader_canonical` (only
   the two reserved words are ignored) and `decodeIntegrityEnvelope_canonical`
   (strict). Every frame of the CPU 1214C session decodes to its header.
+- **GetMultiVariables** (`LeanS7CommPlus.Access`): item addresses, the object qualifier
+  (fixed and VLQ forms), the request payload with an optional IntegrityId before the
+  fill, and the reply's value and error lists. `decodeReadRequest_encode` and
+  `decodeReadReply_encode`: round trips. The read of the CPU 1214C session and the
+  four S7-1500 partial-failure replies decode and re-encode byte for byte.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.

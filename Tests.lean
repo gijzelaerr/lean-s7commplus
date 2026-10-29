@@ -162,6 +162,15 @@ def pvalueVectors : List (PValue × String) := [
   (.wstring (hexBytes "6869"), "0015026869")
 ]
 
+/-- GetMultiVariables replies of a CPU 1512SP-1 FW V2.9 with failing items
+    (`fixtures/s7-1500-v2.9-multiread-partial-failure.json`). -/
+def partialFailureReplies : List (String × String) := [
+  ("missing DB in the middle", "9089f0808082b480130100140002000a020000030014000442f6e6660002c08895b080e6a5fff4000a00000000"),
+  ("offset past end", "9089f0808082b480130100140002000a030014000442f6e6660002c181d1d0808ba3ffc3000c00000000"),
+  ("only failing", "9089f0808082b480130100000001c08895b080e6a5fff402c181d1d0808ba3ffc3000e00000000"),
+  ("failing first", "9089f0808082b480130100000200140002000a0001c08895b080e6a5fff4001000000000")
+]
+
 /-- The lean-s7 dependency is usable: its cursor reads an S7CommPlus frame header. -/
 def testFrameHeaderBytes : IO Unit := do
   let header := bytes #[protocolId, FrameVersion.v1.toByte, 0x00, 0x12]
@@ -317,6 +326,60 @@ def testSessionHeaders : IO Unit := do
             s!"{label}: response header {repr header}"
         | .error error => throw <| IO.userError s!"{label}: {repr error}"
 
+/-- The message of a fixture frame, after the integrity envelope of V3 frames. -/
+def fixtureMessage (label : String) : IO ByteArray := do
+  let some (_, version, hex) := sessionFrames.find? (fun (l, _, _) => l == label)
+    | throw <| IO.userError s!"{label}: missing fixture"
+  match decodeFrame (hexBytes hex) with
+  | .error error => throw <| IO.userError s!"{label}: {repr error}"
+  | .ok (_, data) =>
+    if version == .v3 then
+      match decodeIntegrityEnvelope data with
+      | .ok (_, message) => pure message
+      | .error error => throw <| IO.userError s!"{label}: {repr error}"
+    else pure data
+
+/-- The CPU 1214C read of one byte of DB1: the request payload decodes to that address
+    with IntegrityId 2 and re-encodes exactly; the reply decodes to the value 42. -/
+def testFixtureRead : IO Unit := do
+  let request ← fixtureMessage "request function 0x054C (client-to-plc)"
+  let payload := request.extract 14 request.size
+  match decodeReadRequest .vlq true payload with
+  | .error error => throw <| IO.userError s!"read request: {repr error}"
+  | .ok (decoded, integrityId) =>
+    check (decoded.addresses == [ItemAddress.db 1 0 1]) s!"read request addresses {repr decoded.addresses}"
+    check (integrityId == some 2) "read request IntegrityId"
+    check (decoded.encode integrityId == payload) "read request re-encoding"
+  let reply ← fixtureMessage "response function 0x054C (plc-to-client)"
+  let replyPayload := reply.extract 10 reply.size
+  match decodeReadReply { data := replyPayload } with
+  | .error error => throw <| IO.userError s!"read reply: {repr error}"
+  | .ok (decoded, next) =>
+    check (decoded.returnValue == 0) "read reply return value"
+    check (decoded.values == [(1, .scalar (.blob 0 (bytes #[42])))]) "read reply value"
+    check (decoded.errors.isEmpty) "read reply errors"
+    check (decoded.encode == replyPayload.extract 0 next.offset) "read reply re-encoding"
+    check (replyPayload.extract next.offset replyPayload.size == hexBytes "0700000000")
+      "IntegrityId and fill after the reply"
+
+/-- The S7-1500 partial-failure replies decode with their nonzero return value, the
+    values of the good items and the errors of the failing ones, and re-encode to
+    exactly the bytes read. -/
+def testPartialFailureReplies : IO Unit := do
+  -- (value item numbers, error item numbers) per reply, in fixture order. A missing DB
+  -- is answered twice, with a NULL value and an error (gijzelaerr/s7commplus#130).
+  let expected : List (List UInt32 × List UInt32) :=
+    [([1, 2, 3], [2]), ([1, 3], [2]), ([1], [1, 2]), ([1, 2], [1])]
+  for ((label, hex), (valueItems, errorItems)) in partialFailureReplies.zip expected do
+    let payload := hexBytes hex
+    match decodeReadReply { data := payload } with
+    | .error error => throw <| IO.userError s!"{label}: {repr error}"
+    | .ok (decoded, next) =>
+      check (decoded.returnValue == 0x20278000009A0013) s!"{label}: return value"
+      check (decoded.values.map Prod.fst == valueItems) s!"{label}: value items {decoded.values.map Prod.fst}"
+      check (decoded.errors.map Prod.fst == errorItems) s!"{label}: error items {decoded.errors.map Prod.fst}"
+      check (decoded.encode == payload.extract 0 next.offset) s!"{label}: re-encoding"
+
 def testSessionFrames : IO Unit := do
   for (label, version, hex) in sessionFrames do
     let frame := hexBytes hex
@@ -350,5 +413,7 @@ def main : IO Unit := do
   testSessionFrames
   testCreateObjectTrees
   testSessionHeaders
+  testFixtureRead
+  testPartialFailureReplies
   testFrameRejections
   IO.println "All lean-s7commplus tests passed."
