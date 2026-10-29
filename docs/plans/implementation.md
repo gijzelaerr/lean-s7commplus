@@ -1,13 +1,23 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phase 0 and the unsigned half of phase 1 done on 2026-10-29. Decision 3 is taken (plain V1 first);
+Status: phases 0 and 1 done on 2026-10-29. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
 
-## Phase 1 results (unsigned VLQ and frames)
+## Phase 1 results (VLQ and frames)
 
-The pilot covers the unsigned VLQ widths and complete frames. Signed VLQ follows
-in its own PR.
+Phase 1 is done: all four VLQ widths and complete frames.
+
+- **Signed 32- and 64-bit VLQ** (`LeanS7CommPlus.VlqSigned`): a signed VLQ of `n`
+  groups is the `7n`-bit two's-complement value of its groups (the 64-bit nine-byte
+  form is a 64-bit two's-complement value). The encoders reproduce Python byte for
+  byte, including its non-minimal choices: Python sizes the encoding from the
+  absolute value, so -64 becomes `ff 40` although `40` decodes to -64 too. Theorems:
+  round trips for both widths inside arbitrary surrounding bytes, and the int32
+  canonical form: the accepted bytes are exactly the two's-complement pattern of
+  the value over the number of groups read. The group count is the only freedom,
+  which covers both sign extension and Python's non-minimal encodings. The decoders
+  reject values outside the type's range, which `decode_int32_vlq` returns.
 
 - **Unsigned 32- and 64-bit VLQ** (`LeanS7CommPlus.Vlq`): encoders that match the
   Python reference byte for byte (known-answer tests on boundary values, including
@@ -27,7 +37,7 @@ in its own PR.
   - `decode_uint32_vlq` stops after five bytes and ignores a continuation flag on
     the fifth: `80 80 80 80 80` gives 0. The Lean decoder rejects it.
   - `decode_int32_vlq` returns values outside the int32 range: `8f ff ff ff 7f`
-    gives 4294967295. To be handled with the signed decoders.
+    gives 4294967295. The Lean decoder rejects it.
 - **Effort.** The proof style from lean-s7 carried over unchanged: the cursor
   append lemmas give the round trips by induction over the group list, and the
   reverse-read lemmas give the canonical forms. Each codec took a few build

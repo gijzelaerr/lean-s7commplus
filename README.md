@@ -18,6 +18,11 @@ Implemented and proved so far:
   `Vlq.encodeUInt32_size` and `Vlq.encodeUInt64_size`: one to five and one to nine
   bytes. `Vlq.decodeUInt32_canonical`: the only non-minimal input the decoder
   accepts is the minimal encoding preceded by `0x80` bytes (leading zero groups).
+- **Signed VLQ** (`LeanS7CommPlus.VlqSigned`). `Vlq.decodeInt32_encodeInt32` and
+  `Vlq.decodeInt64_encodeInt64`: round trips inside arbitrary surrounding bytes.
+  `Vlq.decodeInt32_canonical`: the accepted bytes are exactly the two's-complement
+  pattern of the value over the number of groups read; the group count is the only
+  freedom.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.

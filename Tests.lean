@@ -91,6 +91,51 @@ def sessionFrames : List (String × FrameVersion × String) := [
     "7203006420bb06e260137ba55be658ec89a7a9a8c714e37a57aea3cea018d93fb74a6f73fa3100000542000000060000039b340000000001070088d0b8800104937603000101001400012a00000004e88969001200000000896a001300896b00040000020000000072030000")
 ]
 
+/-- Encodings from the Python reference `s7commplus.vlq.encode_int32_vlq`. -/
+def int32Vectors : List (Int × String) := [
+  ((-2147483648), "f880808000"),
+  ((-305419896), "feeeaed308"),
+  ((-1048576), "ffc08000"),
+  ((-8193), "ffbf7f"),
+  ((-8192), "ffc000"),
+  ((-65), "ff3f"),
+  ((-64), "ff40"),
+  ((-1), "7f"),
+  (0, "00"),
+  (1, "01"),
+  (63, "3f"),
+  (64, "8040"),
+  (8191, "bf7f"),
+  (8192, "80c000"),
+  (1048576, "80c08000"),
+  (305419896, "8191d1ac78"),
+  (2147483647, "87ffffff7f")
+]
+
+/-- Encodings from the Python reference `s7commplus.vlq.encode_int64_vlq`. -/
+def int64Vectors : List (Int × String) := [
+  ((-9223372036854775808), "c08080808080808000"),
+  ((-4611686018427387904), "e08080808080808000"),
+  ((-81985529216486895), "ffb797a9c3d9a8b211"),
+  ((-36028797018963969), "ffdfffffffffffffff"),
+  ((-36028797018963968), "ffe080808080808000"),
+  ((-2147483648), "f880808000"),
+  ((-65), "ff3f"),
+  ((-64), "ff40"),
+  ((-1), "7f"),
+  (0, "00"),
+  (1, "01"),
+  (63, "3f"),
+  (64, "8040"),
+  (2147483648, "8880808000"),
+  (36028797018963967, "bfffffffffffff7f"),
+  (36028797018963968, "80a080808080808000"),
+  (72057594037927936, "80c080808080808000"),
+  (81985529216486895, "80c8e8d6bca6d7cdef"),
+  (4611686018427387904, "a08080808080808000"),
+  (9223372036854775807, "bfffffffffffffffff")
+]
+
 /-- The lean-s7 dependency is usable: its cursor reads an S7CommPlus frame header. -/
 def testFrameHeaderBytes : IO Unit := do
   let header := bytes #[protocolId, FrameVersion.v1.toByte, 0x00, 0x12]
@@ -145,6 +190,38 @@ def testUInt64Vectors : IO Unit := do
       check (decoded == value && next.offset == (hexBytes hex).size) s!"uint64 decoding of {hex}"
     | .error _ => throw <| IO.userError s!"uint64 decoding of {hex} failed"
 
+def testInt32Vectors : IO Unit := do
+  for (value, hex) in int32Vectors do
+    let typed := Int32.ofInt value
+    check (toHex (Vlq.encodeInt32 typed) == hex) s!"int32 encoding of {value}: {toHex (Vlq.encodeInt32 typed)} != {hex}"
+    match Vlq.decodeInt32 { data := hexBytes hex } with
+    | .ok (decoded, next) =>
+      check (decoded.toInt == value && next.offset == (hexBytes hex).size) s!"int32 decoding of {hex}"
+    | .error _ => throw <| IO.userError s!"int32 decoding of {hex} failed"
+
+def decodesInt32To (hex : String) (expected : Int) : Bool :=
+  match Vlq.decodeInt32 { data := hexBytes hex } with
+  | .ok (value, next) => value.toInt == expected && next.offset == (hexBytes hex).size
+  | .error _ => false
+
+def testInt32Leniency : IO Unit := do
+  -- Python encodes -64 as ff 40; the single byte 40 decodes to the same value.
+  check (decodesInt32To "40" (-64)) "40 decodes to -64"
+  check (decodesInt32To "ff40" (-64)) "ff 40 decodes to -64"
+  check (decodesInt32To "803f" 63) "sign extension of a positive value"
+  -- Divergence from Python: decode_int32_vlq returns 4294967295 for this input.
+  check (Vlq.decodeInt32 { data := hexBytes "8fffffff7f" } matches .error _) "out-of-range int32"
+  check (Vlq.decodeInt32 { data := hexBytes "8080808080" } matches .error _) "continuation on the fifth byte"
+
+def testInt64Vectors : IO Unit := do
+  for (value, hex) in int64Vectors do
+    let typed := Int64.ofInt value
+    check (toHex (Vlq.encodeInt64 typed) == hex) s!"int64 encoding of {value}: {toHex (Vlq.encodeInt64 typed)} != {hex}"
+    match Vlq.decodeInt64 { data := hexBytes hex } with
+    | .ok (decoded, next) =>
+      check (decoded.toInt == value && next.offset == (hexBytes hex).size) s!"int64 decoding of {hex}"
+    | .error _ => throw <| IO.userError s!"int64 decoding of {hex} failed"
+
 def testSessionFrames : IO Unit := do
   for (label, version, hex) in sessionFrames do
     let frame := hexBytes hex
@@ -170,6 +247,9 @@ def main : IO Unit := do
   testUInt32Vectors
   testUInt32Leniency
   testUInt64Vectors
+  testInt32Vectors
+  testInt32Leniency
+  testInt64Vectors
   testSessionFrames
   testFrameRejections
   IO.println "All lean-s7commplus tests passed."
