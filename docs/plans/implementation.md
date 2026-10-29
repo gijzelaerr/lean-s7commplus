@@ -1,9 +1,40 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–4 done on 2026-10-29; phase 5 done as far as decision 3 allows (fragment reassembly, V3 framing over an abstract MAC, IntegrityIds); its crypto steps wait for decision 3. Phase 2 does not yet cover VLQ arrays, packed
-structs or the EXPLORE elements; phase 3 covers reads and writes of DB regions. Decision 3 is taken (plain V1 first);
-decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
-open.
+Status: phases 0–5 done on 2026-10-29, as far as decision 3 allows; phase 6 (TLS) is
+out of scope under it. "What remains" lists the work that waits for decision 3 or for
+captures. Decision 3 is taken (plain V1 first); decision 1 is provisional (lean-s7
+pinned to a commit). The other decisions are open.
+
+## Phase 6 result (TLS)
+
+Out of scope, as decision 3 stands. Lean core has no TLS, and decision 3 has not chosen
+FFI to a native library. The client speaks plain V1 only: it never sends TLS records and
+it cannot open a V2 session, which the Python client refuses without TLS too. If decision
+3 picks FFI, this phase becomes: TLS 1.3 tunnelled in COTP data after the InitSSL
+exchange, with the record layer behind the same boundary as the MAC of phase 5.
+
+## What remains
+
+The phases are done as far as the decisions allow. What is left, and what it waits for:
+
+**Waiting for decision 3 (crypto and TLS):**
+
+- HMAC-SHA256 itself, its known-answer checks against `hashlib`, and so a live V3
+  session against the emulator's `session_key` mode. With option (a), a pure-Lean
+  SHA-256 and HMAC would plug into `Mac` and `ChainedMac` unchanged.
+- The state-resume chaining dialect of real S7-1200/1500 firmware, which continues
+  finalized SHA-256 states and so needs SHA-256 internals. It fits `ChainedMac`.
+- The V1 SessionKey handshake: the blob layout, key derivation and AES steps. The
+  emulator validates a SecurityKey setup only when `public_key_fingerprint` is
+  configured, and the algorithm is a port of HarpoS7 (MIT, attribution required), so
+  this is a second decision on top of the hash.
+- TLS for V2 (phase 6).
+
+**Waiting for captures:**
+
+- VLQ-element arrays, packed structs, and the EXPLORE elements `A5`–`AC`.
+- The response IntegrityId position for SetVariable and GetVarSubstreamed.
+- Fragment and PDU sizes per firmware, and SystemEvent frames between fragments.
 
 ## Phase 5c results (IntegrityIds)
 
@@ -463,7 +494,8 @@ Depends on open decision 3.
 ## Phase 6: TLS (V2)
 
 TLS needs a native library; Lean core has none. Only if open decision 3 chooses
-FFI. Otherwise V2 stays out of scope and the plan says so.
+FFI. Otherwise V2 stays out of scope and the plan says so. *Result: out of scope; see
+"Phase 6 result" above.*
 
 ## Evidence and hardware boundaries
 
