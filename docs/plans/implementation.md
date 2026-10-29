@@ -1,8 +1,30 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0 and 1 and the scalar half of phase 2 done on 2026-10-29. Decision 3 is taken (plain V1 first);
+Status: phases 0–2 done on 2026-10-29 (phase 2 without VLQ arrays, packed structs and the EXPLORE elements). Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 2b results (object trees)
+
+- **`LeanS7CommPlus.Tree`**: attribute values (a scalar PValue or a fixed-size array:
+  flags `0x10`, element type, VLQ count, elements), normal structs (struct id,
+  `[nonzero VLQ key][value]` members, `0x00` terminator), and the object tree:
+  `A1` object start, `A2` end, `A3` attribute, `A4` relation.
+- **Design.** The tree is decoded as a flat sequence of items with a stack of open
+  objects and structs, so nesting needs no recursive datatype and the proofs are
+  plain inductions over lists. `Closes stack items` says a sequence is well nested
+  and ends exactly when the outermost object closes.
+- **Theorems.** `decodeValue_encode`, `decodeSlot_value`, `decodeSlot_struct`,
+  `decodeItem_encode` (all eight item kinds), `decodeItems_encode` and
+  `decodeTree_encode`: every well-nested tree, inside arbitrary surrounding bytes,
+  decodes to exactly its items and consumes exactly its encoding.
+- **Evidence.** The CreateObject request (13 items) and reply (15 items, with the
+  USINT-array session challenge and the ServerSessionVersion struct) of the CPU
+  1214C session decode and re-encode byte for byte; the four bytes after each
+  tree are left unread.
+- **Still rejected:** arrays of VLQ element types, packed structs, and the EXPLORE
+  elements (`A5`–`AC`). The Python findings from phases 1 and 2a are filed as
+  gijzelaerr/s7commplus#146 to #150.
 
 ## Phase 2a results (scalar PValues)
 

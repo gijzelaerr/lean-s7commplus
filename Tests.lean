@@ -267,6 +267,23 @@ def testPValueRejections : IO Unit := do
   check (decodePValue { data := hexBytes "000c0102" } matches .error _) "truncated DWORD"
   check (decodePValue { data := hexBytes "0015056869" } matches .error _) "truncated WSTRING"
 
+/-- The object trees of the CPU 1214C CreateObject request and reply decode, and
+    re-encode to exactly the bytes they were read from. -/
+def testCreateObjectTrees : IO Unit := do
+  for (label, start, expected) in [("CreateObject (client-to-plc)", 25, 13),
+      ("CreateObject (plc-to-client)", 16, 15)] do
+    let some (_, _, hex) := sessionFrames.find? (fun (l, _, _) => l == label)
+      | throw <| IO.userError s!"{label}: missing fixture"
+    match decodeFrame (hexBytes hex) with
+    | .error error => throw <| IO.userError s!"{label}: {repr error}"
+    | .ok (_, data) =>
+      match decodeTree { data, offset := start } with
+      | .error error => throw <| IO.userError s!"{label}: tree: {repr error}"
+      | .ok (items, next) =>
+        check (items.length == expected) s!"{label}: {items.length} items"
+        check (encodeItems items == data.extract start next.offset) s!"{label}: re-encoding differs"
+        check (data.extract next.offset data.size == bytes #[0, 0, 0, 0]) s!"{label}: trailing bytes"
+
 def testSessionFrames : IO Unit := do
   for (label, version, hex) in sessionFrames do
     let frame := hexBytes hex
@@ -298,5 +315,6 @@ def main : IO Unit := do
   testPValueVectors
   testPValueRejections
   testSessionFrames
+  testCreateObjectTrees
   testFrameRejections
   IO.println "All lean-s7commplus tests passed."

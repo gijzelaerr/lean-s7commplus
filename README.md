@@ -26,6 +26,11 @@ Implemented and proved so far:
 - **Scalar PValues** (`LeanS7CommPlus.PValue`): all 22 scalar datatypes, BLOB and
   WSTRING. `decodePValue_encode`: decoding the encoding of any value, inside
   arbitrary surrounding bytes, returns it and consumes exactly its encoding.
+- **Object trees** (`LeanS7CommPlus.Tree`): objects, attributes, relations, fixed-size
+  arrays and nested structs, read as a flat item sequence with a stack.
+  `decodeValue_encode` and `decodeTree_encode`: any well-nested tree, inside arbitrary
+  surrounding bytes, decodes to exactly its items. The CreateObject request and reply
+  trees of the CPU 1214C session decode and re-encode byte for byte.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
