@@ -43,6 +43,12 @@ Implemented and proved so far:
   fill, and the reply's value and error lists. `decodeReadRequest_encode` and
   `decodeReadReply_encode`: round trips. The read of the CPU 1214C session and the
   four S7-1500 partial-failure replies decode and re-encode byte for byte.
+- **SetMultiVariables and per-item read results** (`LeanS7CommPlus.Write`): the write
+  request (addresses, values numbered from 1, qualifier, fill) and reply, with round
+  trips `decodeWriteRequest_encode` and `decodeWriteReply_encode`. `ReadReply.results`
+  turns a read reply into one value or error per requested item, and
+  `ReadReply.results_spec` proves it sound: one result per item, a value only from the
+  value list with no error for that item, an error only from the error list.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
