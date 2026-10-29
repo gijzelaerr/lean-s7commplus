@@ -60,12 +60,20 @@ Implemented and proved so far:
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.
+- **Fragment reassembly** (`LeanS7CommPlus.Fragments`): replies split over several
+  fragments, with the trailer after the last only. `decodeFragments_encode` and
+  `reassemble_encodeFragments`: round trip, and the reassembled data is the fragments'
+  data in order. `decodeFragments_canonical`: every accepted message is exactly the
+  encoding of its fragments. `reassemble_bound`: at most `maxFragments` (4096)
+  fragments and 65535 bytes per fragment. `reassemble_splitData`: reassembly undoes the
+  emulator's split.
 
 Every frame of a real CPU 1214C V4.2.2 session (`fixtures/`) decodes and
 re-encodes byte for byte, and the VLQ encoders match the Python reference on
 boundary values.
 
-`integration/run.py` runs the Lean client against the Python s7commplus emulator, and
+`integration/run.py` runs the Lean client against the Python s7commplus emulator, with
+whole and with fragmented replies, and
 `integration/fuzz.py` compares the Lean decoders with the Python ones on mutated input.
 
 ```console
