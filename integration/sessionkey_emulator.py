@@ -3,7 +3,7 @@
 The emulator writes the ServerSessionVersion struct id as a VLQ (`82 3a`), where a
 real CPU 1214C writes a 4-byte word (`00 00 01 3a`, s7commplus#136). Python's client
 reads past that, so the order string it should strip is never reached. This subclass
-writes the struct the way the real controller does.
+writes the struct the way the real controller does (s7commplus#151).
 """
 
 import struct

@@ -53,7 +53,7 @@ injection for the emulator, and the public-key table shipped as data.
   s7commplus#136), as the tree codec expects. The Python client then reads the struct
   short and never reaches the order string it is meant to strip. The integration uses
   `integration/sessionkey_emulator.py`, which writes the struct as the controller does.
-  Not yet reported upstream.
+  Reported as s7commplus#151.
 
 ## Phase 5d results (SHA-256 and HMAC-SHA256)
 
