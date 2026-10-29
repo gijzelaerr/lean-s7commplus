@@ -37,7 +37,8 @@ derivation) and 7c (the blob) are done; 7d–7f follow. Decision 1 is provisiona
   connection, as it should.
 - **Not checked.** No controller has decrypted a Lean-built blob: the emulator cannot,
   and the only real capture lacks its random draws. Known-answer agreement with
-  s7commplus is the evidence; s7commplus's blob is field-proven on S7-1200 and S7-1500.
+  s7commplus is the evidence; s7commplus's blobs were accepted
+  by real controllers (an S7-1215C in s7commplus#44, a CPU 1214C in s7commplus#136).
   PLCSIM (family 03, a 216-byte blob) is not supported (7f, optional).
 
 ## Phase 7b results (SessionKey key derivation)
