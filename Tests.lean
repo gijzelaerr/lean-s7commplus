@@ -699,6 +699,125 @@ def testHmacDialects : IO Unit := do
   let message := hexBytes "31000004f2000000050000000134000000"
   check (openV3 (.hmacSha256 key) (sealV3 (.hmacSha256 key) message) |>.toBool) "HMAC-SHA256 V3 frame"
 
+/-- The ISO data units of the s7commplus client's SessionKey session against its
+    emulator (`fixtures/emulator-sessionkey-session.json`). -/
+def emulatorKeyFrames : List (String × String) := [
+  ("client-to-plc", "7201001231000005b30000000000000000300000000072010000"),
+  ("plc-to-client", "7201000f32000005b30000000000000000000072010000"),
+  ("client-to-plc", "720100b031000004ca0000000100000120360000011d00040000000000a1000000d3821f0000a3816900150a7337636f6d6d706c7573a38221001513313a3a3a362e303a3a7337636f6d6d706c7573a3822800150a7337636f6d6d706c7573a38229001500a3822a00150a7337636f6d6d706c7573a3822b000401a3822c001280c3c901a3822d001500a1000000d3817f0000a38169001515537562736372697074696f6e436f6e7461696e6572a2a20000000072010000"),
+  ("plc-to-client", "7201008232000004ca0000000100000101a100000001000000a38231000401a3816900151330313a42443432364230393146303837333141a3822f100214000102030405060708090a0b0c0d0e0f10111213a3823200170000013a823b000401823f00151b313b36455337203231352d31414734302d30584230203b56342e3200a20000000072010000"),
+  ("client-to-plc", "7202015831000005420000000200000001340000000102028e268232010017000007088e090004008e0a0002008e0b0017000007218e220005ded0cdb0c8fc90f31a8e23000482108e24000400008e0c0017000007218e220005cbe68592e2ccf08dad8e2300048482018e24000400008e0d0014008134000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200170000013a823b000401823f0015000000000004e88969001200000000896a001300896b0004000000000000000072020000"),
+  ("plc-to-client", "7201000d3200000542000000020000000072010000"),
+  ("client-to-plc", "72030056209d36c6f3524b8d30e69d56ec312ed3356a85a5f4809e54d4f6daf3f080c5bfaf31000004f200000003000000013400000001018243000205000004e88969001200000000896a001300896b0004000000030000000072030000"),
+  ("plc-to-client", "72030029204bef12ab55f513a46ce43b67acfedeaa138b029f6b11199fc1e6f03dc48575e832000004b1000000"),
+  ("plc-to-client", "7203002920daf460cdf0e619921f55c3dcf20e355c84e221d620c12192385698cc6aee91e00300008931000000"),
+  ("plc-to-client", "7203002220bd87dfc96e19825e7d334e28cab2375b2fd5676f59a0d9a5fb69a36d77a2f1110072030000"),
+  ("client-to-plc", "720300562045c55863d45b4f8e92c8a24b1df7ec81485ec44702d72cfeb014f2d3eff69f173100000586000000040000000134000000012004018e32000004e88969001200000000896a001300896b000400000001010000000072030000"),
+  ("plc-to-client", "720300292088ed70b270a3bd625bae7017780e7347d2aa7175e15f2085ea1f86250c226e5f3200000586000000"),
+  ("plc-to-client", "7203002920b1f1c881d236352e29fa6639373c1fe2c5926d529d5a60ff80e01f661a43d77e0400000010021400"),
+  ("plc-to-client", "72030029206ba53c3e817584c453bd2c6113f2a28bfc03e1ba8e1c18cb18e35ce8d137c2ba0102030405060708"),
+  ("plc-to-client", "7203002920d47e1043b3ad48866bff4035f6fefbb285ccb68973849a318c93ac75ee5db32c090a0b0c0d0e0f10"),
+  ("plc-to-client", "72030025208c4e15464e89da80dc87abb37a161e18006675cc59fe8f6a80d7802658a96f0e1112130072030000"),
+  ("client-to-plc", "7203005d20c537cae5a4dab27e6af6b419789210bb978fa6feb3baea76abcaa7d96757931d310000054c0000000500000001340000000001070088d0b88001049376030204000004e88969001200000000896a001300896b00040000020000000072030000"),
+  ("plc-to-client", "7203002920a602838a7f2d8ab17a3244475508523d397792dd4296f4b994e38c7a76b0b25f320000054c000000"),
+  ("plc-to-client", "72030029209d92bf3ba34a6b93c913ef95baba858382ee8adadb79eb443a87b3446c54ebbc0500000100140004"),
+  ("plc-to-client", "720300282092c22c904f04be9784dee3a8e6cc49c14e180f706479d05c2ebfda302cd8441a0203040500000172030000"),
+  ("client-to-plc", "7203006520c4f6ef1647dc648d9d2988870d9b1b7cb956df980cbcb66c3b445be1d4114dca31000005420000000600000001340000000001070088d0b880010493760300020100140002aabb00000004e88969001200000000896a001300896b00040000020000000072030000"),
+  ("plc-to-client", "72030029201f9bc0e0a6ac1aa8d1152d26d38ac87b4828d7a1b934ed9ccc3935f6316e221b3200000542000000"),
+  ("plc-to-client", "7203002720032d3101ef3ce0d85ab395cd96812b10bfa6f58078654cddabe7fb53782c3bf306000100000072030000"),
+  ("client-to-plc", "7203005d20bb2280eb432b3ca51a0dbcfebf3e6832ff9837dc3619a24cd352b02e6f604fd8310000054c0000000700000001340000000001070088d0b88001049376030004000004e88969001200000000896a001300896b00040000030000000072030000"),
+  ("plc-to-client", "7203002920a602838a7f2d8ab17a3244475508523d397792dd4296f4b994e38c7a76b0b25f320000054c000000"),
+  ("plc-to-client", "7203002920861a0ff7120a4bd8240d34b435a7d04fe98502d18c7323d28452d940773a58c40700000100140004"),
+  ("plc-to-client", "720300282082b49dcc69345cb1b58a64c56b58b716d117235d9c367e8e3eb32c6e4bec39ecaabb020300000272030000"),
+  ("client-to-plc", "7201001231000004d40000000800000001340000000072010000"),
+  ("plc-to-client", "7201000832000004d4000000")]
+
+def emulatorFrame (index : Nat) : ByteArray := hexBytes emulatorKeyFrames[index]!.2
+
+/-- The plaintext message of a V3 frame from a fixture, without checking its tag. -/
+def v3Message (frame : ByteArray) : IO ByteArray :=
+  match decodeFrame frame with
+  | .ok (.v3, data) =>
+    match decodeIntegrityEnvelope data with
+    | .ok (_, message) => pure message
+    | .error error => throw <| IO.userError s!"envelope: {repr error}"
+  | _ => throw <| IO.userError "not a V3 frame"
+
+def testSessionKeyWire : IO Unit := do
+  let testKey := ((List.range 24).map UInt8.ofNat).toByteArray
+  let some publicKey := publicKey? "01:BD426B091F08731A" | throw <| IO.userError "public key"
+  check (publicKey.size == 40) "public key size"
+  check (parseFingerprint "01:bd426b091f08731a" == some (.s71200, "BD426B091F08731A")) "fingerprint"
+  -- The real CPU 1214C setup: its SecurityKey decodes, and its public key id is ours.
+  let realSetup ← fixtureMessage "SetupSession (client-to-plc)"
+  let realPayload := realSetup.extract 14 realSetup.size
+  match decodeSecurityKey { data := realPayload, offset := 4 + 1 + 1 + 2 + 2 + 1 } with
+  | .error error => throw <| IO.userError s!"real SecurityKey: {repr error}"
+  | .ok (key, after) =>
+    check (key.publicKey == ⟨keyId publicKey, 0x110⟩) "real public key id and flags"
+    check (key.symmetricKey.flags == 0x10101) "real symmetric key flags"
+    check (key.blob.size == 180) "real blob size"
+    check (realPayload.extract 11 after.offset == key.encode) "real SecurityKey re-encodes"
+    let realCreate ← fixtureMessage "CreateObject (plc-to-client)"
+    match decodeCreateObjectReply (realCreate.extract 10 realCreate.size) with
+    | .ok reply =>
+      check (setupSessionKeyPayload reply.sessionId key.encode reply.serverSessionVersion == realPayload)
+        "real SessionKey setup payload"
+    | .error error => throw <| IO.userError s!"real CreateObject: {repr error}"
+  -- The real activation, protection-level read, read and write messages carry the
+  -- IntegrityIds of the keyed counters.
+  let realSession : Session := { phase := .ready, sessionId := 0x39b, sequence := 3 }
+  let keyed := Keyed.install testKey
+  let activation ← fixtureMessage "request function 0x04F2 (client-to-plc)"
+  check (realSession.keyedMessage .activate 0 == activation) "real activation message"
+  let protection ← fixtureMessage "request function 0x0586 (client-to-plc)"
+  check ({ realSession with sequence := 4 }.keyedMessage (.getVarSubstreamed 1842) 1 == protection)
+    "real protection-level message"
+  -- The emulator session, frame by frame.
+  match decodeCreateObjectReply ((emulatorFrame 3).extract 14 ((emulatorFrame 3).size - 4)) with
+  | .error error => throw <| IO.userError s!"emulator CreateObject: {repr error}"
+  | .ok reply =>
+    let securityKey := SecurityKey.ofKeys .s71200 publicKey testKey (ByteArray.mk (Array.replicate 180 0))
+    let created : Session := { phase := .created, sessionId := reply.sessionId, sequence := 2 }
+    let some (setupFrame, _, _) := created.send (.setupSessionKey reply.serverSessionVersion securityKey.encode)
+      | throw <| IO.userError "setup not sendable"
+    check (setupFrame == emulatorFrame 4) "emulator SessionKey setup frame"
+    let ready : Session := { phase := .ready, sessionId := reply.sessionId, sequence := 3 }
+    let some (activationFrame, _, ready, keyed) := ready.sendKeyed keyed .activate
+      | throw <| IO.userError "activation"
+    check (activationFrame == emulatorFrame 6) "emulator activation frame"
+    let keyed := keyed.skipAfterLegitimation .s71200
+    let some (protectionFrame, _, ready, keyed) := ready.sendKeyed keyed (.getVarSubstreamed 1842)
+      | throw <| IO.userError "protection level"
+    check (protectionFrame == emulatorFrame 10) "emulator protection-level frame"
+    let read : ReadRequest := { addresses := [ItemAddress.db 1 2 4], form := .vlq, keyQualifier := 0 }
+    let some (readFrame, _, ready, keyed) := ready.sendKeyed keyed (.read read)
+      | throw <| IO.userError "read"
+    check (readFrame == emulatorFrame 16) "emulator read frame"
+    let write : WriteRequest :=
+      { addresses := [ItemAddress.db 1 0 2], values := [.scalar (.blob 0 (bytes #[0xaa, 0xbb]))],
+        form := .vlq, keyQualifier := 0 }
+    let some (writeFrame, _, ready, keyed) := ready.sendKeyed keyed (.write write)
+      | throw <| IO.userError "write"
+    check (writeFrame == emulatorFrame 20) "emulator write frame"
+    let some (readFrame2, _, _, keyed) := ready.sendKeyed keyed
+        (.read { read with addresses := [ItemAddress.db 1 0 4] })
+      | throw <| IO.userError "read 2"
+    check (readFrame2 == emulatorFrame 23) "emulator second read frame"
+    check (keyed.counters == { read := 4, write := 3 }) "counters after the session"
+    -- Replies: the data units after each request reassemble and open under the key.
+    for (first, last, function) in [(7, 9, errorFunction), (11, 15, FunctionCode.getVarSubstreamed),
+        (17, 19, FunctionCode.getMultiVariables), (21, 22, FunctionCode.setMultiVariables),
+        (24, 26, FunctionCode.getMultiVariables)] do
+      let units := (List.range (last + 1 - first)).foldl (fun acc i => acc ++ emulatorFrame (first + i)) ByteArray.empty
+      match keyed.openReply units with
+      | .ok message =>
+        match decodeResponseHeader { data := message } with
+        | .ok (header, _) => check (header.function == function) s!"reply {first}: function"
+        | .error _ => throw <| IO.userError s!"reply {first}: header"
+      | .error error => throw <| IO.userError s!"reply {first}: {repr error}"
+      check (keyed.openReply (flipByte units 40)).toBool.not s!"reply {first}: changed byte refused"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -724,4 +843,5 @@ def main : IO Unit := do
   testIntegrityIds
   testSha256
   testHmacDialects
+  testSessionKeyWire
   IO.println "All lean-s7commplus tests passed."

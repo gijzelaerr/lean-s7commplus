@@ -2,15 +2,17 @@
 
 Prints the port on the first line, then serves until stdin closes. DB1 holds the
 bytes 0..15, DB7 four zero bytes. With MAX_RESPONSE_PDU, the emulator splits every
-reply after the session setup into fragments of at most that many bytes.
+reply after the session setup into fragments of at most that many bytes. With
+`--sessionkey`, it runs in V1 SessionKey mode (integration/sessionkey_emulator.py).
 
-usage: emulator.py [MAX_RESPONSE_PDU]
+usage: emulator.py [--sessionkey] [MAX_RESPONSE_PDU]
 """
 
 import socket
 import sys
 
 from s7commplus.server import S7CommPlusServer
+from sessionkey_emulator import make_server
 
 
 def free_port() -> int:
@@ -20,8 +22,11 @@ def free_port() -> int:
 
 
 def main() -> None:
-    max_response_pdu = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    server = S7CommPlusServer(max_response_pdu=max_response_pdu)
+    arguments = sys.argv[1:]
+    sessionkey = "--sessionkey" in arguments
+    numbers = [argument for argument in arguments if argument != "--sessionkey"]
+    max_response_pdu = int(numbers[0]) if numbers else None
+    server = make_server(max_response_pdu) if sessionkey else S7CommPlusServer(max_response_pdu=max_response_pdu)
     server.register_raw_db(1, bytearray(range(16)))
     server.register_raw_db(7, bytearray(4))
     port = free_port()

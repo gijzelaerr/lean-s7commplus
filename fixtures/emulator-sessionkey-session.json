@@ -1,0 +1,151 @@
+{
+  "description": "A V1 SessionKey session of the s7commplus client (master, 2026-10-29) against its emulator: InitSSL, CreateObject, SessionKey SetupSession, activation, protection-level read, read DB1.2..6, write DB1.0..2, read DB1.0..4, DeleteObject. The emulator is integration/sessionkey_emulator.py: public_key_fingerprint 01:BD426B091F08731A, session_challenge 00..13, session_key 00..17, max_response_pdu 8, and the ServerSessionVersion struct id as a 4-byte word as a real CPU 1214C sends it. The client's authenticator is patched to return an all-zero 180-byte blob and that session key, as s7commplus's own tests do. Each entry is one ISO data unit.",
+  "source": "Generated with s7commplus master and integration/sessionkey_emulator.py; see docs/plans/implementation.md, phase 7a.",
+  "frames": [
+    {
+      "label": "request function 0x05B3 (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "7201001231000005b30000000000000000300000000072010000"
+    },
+    {
+      "label": "response function 0x05B3 (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7201000f32000005b30000000000000000000072010000"
+    },
+    {
+      "label": "request function 0x04CA (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "720100b031000004ca0000000100000120360000011d00040000000000a1000000d3821f0000a3816900150a7337636f6d6d706c7573a38221001513313a3a3a362e303a3a7337636f6d6d706c7573a3822800150a7337636f6d6d706c7573a38229001500a3822a00150a7337636f6d6d706c7573a3822b000401a3822c001280c3c901a3822d001500a1000000d3817f0000a38169001515537562736372697074696f6e436f6e7461696e6572a2a20000000072010000"
+    },
+    {
+      "label": "response function 0x04CA (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7201008232000004ca0000000100000101a100000001000000a38231000401a3816900151330313a42443432364230393146303837333141a3822f100214000102030405060708090a0b0c0d0e0f10111213a3823200170000013a823b000401823f00151b313b36455337203231352d31414734302d30584230203b56342e3200a20000000072010000"
+    },
+    {
+      "label": "request function 0x0542 (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "7202015831000005420000000200000001340000000102028e268232010017000007088e090004008e0a0002008e0b0017000007218e220005ded0cdb0c8fc90f31a8e23000482108e24000400008e0c0017000007218e220005cbe68592e2ccf08dad8e2300048482018e24000400008e0d0014008134000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200170000013a823b000401823f0015000000000004e88969001200000000896a001300896b0004000000000000000072020000"
+    },
+    {
+      "label": "response function 0x0542 (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7201000d3200000542000000020000000072010000"
+    },
+    {
+      "label": "request function 0x04F2 (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "72030056209d36c6f3524b8d30e69d56ec312ed3356a85a5f4809e54d4f6daf3f080c5bfaf31000004f200000003000000013400000001018243000205000004e88969001200000000896a001300896b0004000000030000000072030000"
+    },
+    {
+      "label": "response function 0x04B1 (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "72030029204bef12ab55f513a46ce43b67acfedeaa138b029f6b11199fc1e6f03dc48575e832000004b1000000"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002920daf460cdf0e619921f55c3dcf20e355c84e221d620c12192385698cc6aee91e00300008931000000"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002220bd87dfc96e19825e7d334e28cab2375b2fd5676f59a0d9a5fb69a36d77a2f1110072030000"
+    },
+    {
+      "label": "request function 0x0586 (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "720300562045c55863d45b4f8e92c8a24b1df7ec81485ec44702d72cfeb014f2d3eff69f173100000586000000040000000134000000012004018e32000004e88969001200000000896a001300896b000400000001010000000072030000"
+    },
+    {
+      "label": "response function 0x0586 (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "720300292088ed70b270a3bd625bae7017780e7347d2aa7175e15f2085ea1f86250c226e5f3200000586000000"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002920b1f1c881d236352e29fa6639373c1fe2c5926d529d5a60ff80e01f661a43d77e0400000010021400"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "72030029206ba53c3e817584c453bd2c6113f2a28bfc03e1ba8e1c18cb18e35ce8d137c2ba0102030405060708"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002920d47e1043b3ad48866bff4035f6fefbb285ccb68973849a318c93ac75ee5db32c090a0b0c0d0e0f10"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "72030025208c4e15464e89da80dc87abb37a161e18006675cc59fe8f6a80d7802658a96f0e1112130072030000"
+    },
+    {
+      "label": "request function 0x054C (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "7203005d20c537cae5a4dab27e6af6b419789210bb978fa6feb3baea76abcaa7d96757931d310000054c0000000500000001340000000001070088d0b88001049376030204000004e88969001200000000896a001300896b00040000020000000072030000"
+    },
+    {
+      "label": "response function 0x054C (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002920a602838a7f2d8ab17a3244475508523d397792dd4296f4b994e38c7a76b0b25f320000054c000000"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "72030029209d92bf3ba34a6b93c913ef95baba858382ee8adadb79eb443a87b3446c54ebbc0500000100140004"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "720300282092c22c904f04be9784dee3a8e6cc49c14e180f706479d05c2ebfda302cd8441a0203040500000172030000"
+    },
+    {
+      "label": "request function 0x0542 (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "7203006520c4f6ef1647dc648d9d2988870d9b1b7cb956df980cbcb66c3b445be1d4114dca31000005420000000600000001340000000001070088d0b880010493760300020100140002aabb00000004e88969001200000000896a001300896b00040000020000000072030000"
+    },
+    {
+      "label": "response function 0x0542 (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "72030029201f9bc0e0a6ac1aa8d1152d26d38ac87b4828d7a1b934ed9ccc3935f6316e221b3200000542000000"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002720032d3101ef3ce0d85ab395cd96812b10bfa6f58078654cddabe7fb53782c3bf306000100000072030000"
+    },
+    {
+      "label": "request function 0x054C (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "7203005d20bb2280eb432b3ca51a0dbcfebf3e6832ff9837dc3619a24cd352b02e6f604fd8310000054c0000000700000001340000000001070088d0b88001049376030004000004e88969001200000000896a001300896b00040000030000000072030000"
+    },
+    {
+      "label": "response function 0x054C (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002920a602838a7f2d8ab17a3244475508523d397792dd4296f4b994e38c7a76b0b25f320000054c000000"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7203002920861a0ff7120a4bd8240d34b435a7d04fe98502d18c7323d28452d940773a58c40700000100140004"
+    },
+    {
+      "label": "response continuation fragment (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "720300282082b49dcc69345cb1b58a64c56b58b716d117235d9c367e8e3eb32c6e4bec39ecaabb020300000272030000"
+    },
+    {
+      "label": "request function 0x04D4 (client-to-plc)",
+      "direction": "client-to-plc",
+      "hex": "7201001231000004d40000000800000001340000000072010000"
+    },
+    {
+      "label": "response function 0x04D4 (plc-to-client)",
+      "direction": "plc-to-client",
+      "hex": "7201000832000004d4000000"
+    }
+  ]
+}

@@ -97,6 +97,50 @@ def explorePayload (exploreId : UInt32) (attributes : List UInt32) : ByteArray :
     Vlq.encodeUInt32 (UInt32.ofNat attributes.length) ++ encodeVlqList attributes ++
     uint32BE 0 ++ bytes #[0x00]
 
+/-! ## SessionKey setup, activation and protection level -/
+
+def AttributeId.sessionSetupLegitimation : UInt32 := 1830
+
+/-- s7commplus's `_strip_paom_string_in_session_version`: empty the WString of element
+    319 (the device's order string), which V1 SessionKey controllers refuse to get back. -/
+def stripPaomString (version : ByteArray) : ByteArray :=
+  let needle := bytes #[0x82, 0x3f, 0x00, 0x15]
+  let found := (List.range version.size).find? fun i => version.extract i (i + 4) == needle
+  match found with
+  | none => version
+  | some index =>
+    let afterType := index + 4
+    match Vlq.decodeUInt32 { data := version, offset := afterType } with
+    | .error _ => version
+    | .ok (length, cursor) =>
+      version.extract 0 afterType ++ bytes #[0x00] ++
+        version.extract (cursor.offset + length.toNat) version.size
+
+/-- The SessionKey setup payload: SetMultiVariables of the encoded SecurityKey
+    (`LeanS7CommPlus.SessionKey`) to address 1830 and of the ServerSessionVersion echo,
+    without the order string, to address 306. -/
+def setupSessionKeyPayload (sessionId : UInt32) (securityKey : ByteArray) (serverSessionVersion : ByteArray) :
+    ByteArray :=
+  uint32BE sessionId ++ Vlq.encodeUInt32 2 ++ Vlq.encodeUInt32 2 ++
+    Vlq.encodeUInt32 AttributeId.sessionSetupLegitimation ++
+    Vlq.encodeUInt32 AttributeId.serverSessionVersion ++
+    Vlq.encodeUInt32 1 ++ securityKey ++ Vlq.encodeUInt32 2 ++ stripPaomString serverSessionVersion ++
+    bytes #[0x00] ++ encodeObjectQualifier .fixed 0 ++ uint32BE 0
+
+/-- The session activation: SetVariable of USINT 5 to address 323, with the request's
+    sequence number as key qualifier and three fill bytes. -/
+def activationPayload (sessionId : UInt32) (sequence : UInt16) : ByteArray :=
+  uint32BE sessionId ++ Vlq.encodeUInt32 1 ++ Vlq.encodeUInt32 323 ++ bytes #[0x00, 0x02] ++
+    Vlq.encodeUInt32 5 ++ encodeObjectQualifier .fixed sequence.toUInt32 ++ bytes #[0, 0, 0]
+
+def AttributeId.effectiveProtectionLevel : UInt32 := 1842
+
+/-- GetVarSubstreamed of one address of an object, with a request field and four
+    fill bytes. -/
+def getVarSubstreamedPayload (objectId address : UInt32) : ByteArray :=
+  uint32BE objectId ++ bytes #[0x20, 0x04, 0x01] ++ Vlq.encodeUInt32 address ++
+    encodeObjectQualifier .vlq 0 ++ uint16BE 1 ++ uint32BE 0
+
 /-! ## CreateObject reply -/
 
 /-- The bytes of the last value of an attribute in a decoded tree: a value, or a
@@ -127,6 +171,18 @@ structure CreateObjectReply where
   returnValue : UInt64
   sessionId : UInt32
   serverSessionVersion : ByteArray
+  /-- The public-key fingerprint a SessionKey controller advertises in attribute 233
+      of its ServerSession object, such as `01:BD426B091F08731A`. -/
+  fingerprint : Option String
+
+/-- The first text value of attribute 233 that looks like a key fingerprint. -/
+def findFingerprint : List Item → Option String
+  | [] => none
+  | .attribute 233 (.scalar (.wstring text)) :: rest =>
+    match String.fromUTF8? text with
+    | some value => if value.length = 19 ∧ value.toList[2]? = some ':' then some value else findFingerprint rest
+    | none => findFingerprint rest
+  | _ :: rest => findFingerprint rest
 
 /-- Decode a CreateObject reply payload: return value, object ids, then the tree. -/
 def decodeCreateObjectReply (payload : ByteArray) : Except DecodeError CreateObjectReply := do
@@ -140,7 +196,7 @@ def decodeCreateObjectReply (payload : ByteArray) : Except DecodeError CreateObj
   let some sessionId := ids.head? | throw (.invalidField 0 "no object id")
   let some version := attributeBytes AttributeId.serverSessionVersion items
     | throw (.invalidField 0 "CreateObject reply has no ServerSessionVersion")
-  pure { returnValue, sessionId, serverSessionVersion := version }
+  pure { returnValue, sessionId, serverSessionVersion := version, fingerprint := findFingerprint items }
 
 /-! ## The session state machine -/
 
@@ -167,6 +223,12 @@ inductive Request where
   | read (request : ReadRequest)
   | write (request : WriteRequest)
   | explore (exploreId : UInt32) (attributes : List UInt32)
+  /-- The SessionKey setup, with the encoded SecurityKey. -/
+  | setupSessionKey (serverSessionVersion securityKey : ByteArray)
+  /-- The session activation after a SessionKey setup. -/
+  | activate
+  /-- GetVarSubstreamed of an address of the session object. -/
+  | getVarSubstreamed (address : UInt32)
 
 def Request.function : Request → UInt16
   | .initSsl => FunctionCode.initSsl
@@ -175,12 +237,16 @@ def Request.function : Request → UInt16
   | .read _ => FunctionCode.getMultiVariables
   | .write _ => FunctionCode.setMultiVariables
   | .explore .. => FunctionCode.explore
+  | .setupSessionKey .. => FunctionCode.setMultiVariables
+  | .activate => FunctionCode.setVariable
+  | .getVarSubstreamed _ => FunctionCode.getVarSubstreamed
 
 /-- The phase a request may be sent in. -/
 def Request.phase : Request → Phase
   | .initSsl => .connected
   | .createObject => .sslProbed
   | .setupSession _ => .created
+  | .setupSessionKey .. => .created
   | _ => .ready
 
 /-- The frame version and request header of a request in a session. -/
@@ -192,6 +258,7 @@ def Session.frameFor (session : Session) (request : Request) : FrameVersion × R
   | .initSsl => (.v1, header 0 0x30)
   | .createObject => (.v1, header ObjectId.nullServerSession 0x36)
   | .setupSession _ => (.v2, header session.sessionId 0x34)
+  | .setupSessionKey .. => (.v2, header session.sessionId 0x34)
   | _ => (.v1, header session.sessionId 0x34)
 
 def Request.payload (session : Session) : Request → ByteArray
@@ -201,6 +268,9 @@ def Request.payload (session : Session) : Request → ByteArray
   | .read request => request.encode none
   | .write request => request.encode none
   | .explore exploreId attributes => explorePayload exploreId attributes
+  | .setupSessionKey version securityKey => setupSessionKeyPayload session.sessionId securityKey version
+  | .activate => activationPayload session.sessionId session.sequence
+  | .getVarSubstreamed address => getVarSubstreamedPayload session.sessionId address
 
 /-- Send `request`: the frame to put on the wire and the session after it, or `none`
     when the request is not allowed in the session's phase. -/
@@ -222,6 +292,7 @@ def Phase.after (phase : Phase) (request : Request) : Phase :=
   | .initSsl => .sslProbed
   | .createObject => .created
   | .setupSession _ => .ready
+  | .setupSessionKey .. => .ready
   | _ => phase
 
 /-- Whether a reply's function is checked: every request but InitSSL. -/
@@ -297,10 +368,11 @@ theorem Phase.after_spec (request : Request) :
   cases request <;> rfl
 
 /-- Data requests (reads, writes, EXPLORE) can only be sent once the session is ready,
-    and the only request that makes a session ready is SetupSession. -/
+    and the only requests that make a session ready are the two SetupSessions. -/
 theorem Session.ready_only_after_setup (session : Session) (request : Request) :
     session.phase.after request = .ready → session.phase = .ready ∨
-      ∃ version, request = .setupSession version := by
+      (∃ version, request = .setupSession version) ∨
+      ∃ version securityKey, request = .setupSessionKey version securityKey := by
   cases request <;> simp [Phase.after]
 
 end LeanS7CommPlus
