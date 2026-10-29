@@ -23,6 +23,9 @@ Implemented and proved so far:
   `Vlq.decodeInt32_canonical`: the accepted bytes are exactly the two's-complement
   pattern of the value over the number of groups read; the group count is the only
   freedom.
+- **Scalar PValues** (`LeanS7CommPlus.PValue`): all 22 scalar datatypes, BLOB and
+  WSTRING. `decodePValue_encode`: decoding the encoding of any value, inside
+  arbitrary surrounding bytes, returns it and consumes exactly its encoding.
 - **Frames** (`LeanS7CommPlus.Frame`). `decodeFrame_encodeFrame`: round trip.
   `decodeFrame_canonical`: every accepted frame is exactly the encoding of the
   decoded version and data.

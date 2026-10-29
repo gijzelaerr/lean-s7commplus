@@ -1,8 +1,35 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0 and 1 done on 2026-10-29. Decision 3 is taken (plain V1 first);
+Status: phases 0 and 1 and the scalar half of phase 2 done on 2026-10-29. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 2a results (scalar PValues)
+
+- **`LeanS7CommPlus.PValue`**: the PValue type for all 22 scalar datatypes (NULL,
+  the fixed-width and VLQ integers, BYTE/WORD/DWORD/LWORD, REAL/LREAL as IEEE
+  bits, TIMESTAMP, TIMESPAN, RID, AID), BLOB (root id, length, bytes) and WSTRING
+  (length and UTF-8 bytes, kept as bytes). The encoder matches Python's
+  `encode_pvalue_typed` byte for byte for every type. `decodePValue_encode` proves
+  the round trip inside arbitrary surrounding bytes, built from per-field lemmas
+  (`decodePValueBody_encodeBody`, `decodeBytes_encodeBytes`).
+- **Not yet:** arrays (flags `0x10`), structs and S7STRING, and a canonical-form
+  theorem. The decoder rejects them for now. The canonical form follows the field
+  structure: the fixed-width kinds are strict and the VLQ kinds inherit the VLQ
+  leniency (overlong encodings).
+- **Python findings**, each reproduced against s7commplus `master`:
+  1. Arrays of 64-bit VLQ types (ULINT, LINT, TIMESPAN) are read with the 32-bit
+     VLQ reader: `decode_pvalue_to_bytes` raises for an element of 2^40, and
+     `skip_typed_value` stops one byte short, desynchronising the walk.
+  2. `encode_typed_value(BLOB)` omits the BlobRootId that `decode_pvalue_to_bytes`
+     and `skip_typed_value` expect; decoding its output returns the wrong bytes.
+  3. `encode_pvalue_typed(S7STRING)` produces a value `decode_pvalue_to_bytes`
+     rejects ("Unsupported PValue datatype: 0x19").
+  4. `skip_typed_value` does not handle packed structs: on a packed struct it stops
+     at offset 7 where `decode_pvalue_to_bytes` correctly consumes 19 bytes.
+
+  Arrays and structs wait until their element encodings are pinned with captures,
+  because the Python reference cannot serve as the oracle there.
 
 ## Phase 1 results (VLQ and frames)
 
