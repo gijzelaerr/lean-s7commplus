@@ -284,6 +284,39 @@ def testCreateObjectTrees : IO Unit := do
         check (encodeItems items == data.extract start next.offset) s!"{label}: re-encoding differs"
         check (data.extract next.offset data.size == bytes #[0, 0, 0, 0]) s!"{label}: trailing bytes"
 
+/-- The message under each fixture frame: the integrity envelope comes off V3 frames,
+    then the header decodes with the function and sequence number of the capture. -/
+def testSessionHeaders : IO Unit := do
+  -- (function, sequence) in capture order; requests and responses alternate. The PLC
+  -- answers InitSSL with the ERROR2 function 0x05a9: this session runs without TLS.
+  let expected : List (UInt16 × UInt16) := [(0x05b3, 0), (0x05a9, 0), (0x04ca, 1), (0x04ca, 1),
+    (0x0542, 2), (0x0542, 2), (0x04f2, 3), (0x04f2, 3), (0x0586, 4), (0x0586, 4),
+    (0x054c, 5), (0x054c, 5), (0x0542, 6)]
+  for ((label, version, hex), (function, sequence)) in sessionFrames.zip expected do
+    match decodeFrame (hexBytes hex) with
+    | .error error => throw <| IO.userError s!"{label}: {repr error}"
+    | .ok (_, data) =>
+      let message ← if version == .v3 then
+          match decodeIntegrityEnvelope data with
+          | .ok (digest, message) =>
+            check (digest.size == 32) s!"{label}: digest size"
+            check (encodeIntegrityEnvelope digest message == data) s!"{label}: envelope re-encoding"
+            pure message
+          | .error error => throw <| IO.userError s!"{label}: envelope: {repr error}"
+        else pure data
+      if label.endsWith "(client-to-plc)" then
+        match decodeRequestHeader { data := message } with
+        | .ok (header, next) =>
+          check (header.function == function && header.sequence == sequence && next.offset == 14)
+            s!"{label}: request header {repr header}"
+        | .error error => throw <| IO.userError s!"{label}: {repr error}"
+      else
+        match decodeResponseHeader { data := message } with
+        | .ok (header, next) =>
+          check (header.function == function && header.sequence == sequence && next.offset == 10)
+            s!"{label}: response header {repr header}"
+        | .error error => throw <| IO.userError s!"{label}: {repr error}"
+
 def testSessionFrames : IO Unit := do
   for (label, version, hex) in sessionFrames do
     let frame := hexBytes hex
@@ -316,5 +349,6 @@ def main : IO Unit := do
   testPValueRejections
   testSessionFrames
   testCreateObjectTrees
+  testSessionHeaders
   testFrameRejections
   IO.println "All lean-s7commplus tests passed."
