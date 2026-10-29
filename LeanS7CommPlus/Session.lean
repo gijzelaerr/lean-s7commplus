@@ -174,6 +174,8 @@ structure CreateObjectReply where
   /-- The public-key fingerprint a SessionKey controller advertises in attribute 233
       of its ServerSession object, such as `01:BD426B091F08731A`. -/
   fingerprint : Option String
+  /-- The 20-byte session challenge a SessionKey controller sends in attribute 303. -/
+  challenge : Option ByteArray
 
 /-- The first text value of attribute 233 that looks like a key fingerprint. -/
 def findFingerprint : List Item → Option String
@@ -183,6 +185,12 @@ def findFingerprint : List Item → Option String
     | some value => if value.length = 19 ∧ value.toList[2]? = some ':' then some value else findFingerprint rest
     | none => findFingerprint rest
   | _ :: rest => findFingerprint rest
+
+/-- The first USINT array of attribute 303: the session challenge. -/
+def findChallenge : List Item → Option ByteArray
+  | [] => none
+  | .attribute 303 (.array 0x02 elements) :: _ => some elements
+  | _ :: rest => findChallenge rest
 
 /-- Decode a CreateObject reply payload: return value, object ids, then the tree. -/
 def decodeCreateObjectReply (payload : ByteArray) : Except DecodeError CreateObjectReply := do
@@ -196,7 +204,9 @@ def decodeCreateObjectReply (payload : ByteArray) : Except DecodeError CreateObj
   let some sessionId := ids.head? | throw (.invalidField 0 "no object id")
   let some version := attributeBytes AttributeId.serverSessionVersion items
     | throw (.invalidField 0 "CreateObject reply has no ServerSessionVersion")
-  pure { returnValue, sessionId, serverSessionVersion := version, fingerprint := findFingerprint items }
+  pure
+    { returnValue, sessionId, serverSessionVersion := version, fingerprint := findFingerprint items,
+      challenge := findChallenge items }
 
 /-! ## The session state machine -/
 

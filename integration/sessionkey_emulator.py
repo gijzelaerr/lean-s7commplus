@@ -10,11 +10,15 @@ import struct
 
 from s7commplus.protocol import DataType, ProtocolVersion
 from s7commplus.server import S7CommPlusServer
+from s7commplus.v1_session_key.key_derivation import derive_session_key
 from s7commplus.vlq import encode_uint32_vlq
 
 FINGERPRINT = "01:BD426B091F08731A"
 CHALLENGE = bytes(range(20))
-SESSION_KEY = bytes(range(24))
+# The clients get key2 instead of drawing it; the emulator holds the session key that
+# s7commplus derives from it and the challenge.
+KEY2 = bytes(range(100, 124))
+SESSION_KEY = derive_session_key(KEY2, CHALLENGE)
 
 
 class SessionKeyServer(S7CommPlusServer):

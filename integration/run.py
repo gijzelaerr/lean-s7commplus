@@ -3,9 +3,10 @@
 Starts integration/emulator.py, runs lean-s7commplus-cli against it, and checks each
 result against the emulator's data and against the Python client. The checks run
 against whole replies, against replies split into 8-byte fragments, and in a V1
-SessionKey session with split replies. The SessionKey pass gives both clients the
-emulator's session key instead of the handshake cryptography (the emulator cannot
-decrypt a blob), so it checks the wire format and the keyed session, not the blob.
+SessionKey session with split replies. The SessionKey pass gives both clients key2 and
+an all-zero blob instead of drawing key2 and building the blob (the emulator cannot
+decrypt a blob); each derives the session key from key2 and the emulator's challenge.
+It checks the key derivation, the wire format and the keyed session, not the blob.
 
 usage: run.py
 """
@@ -18,7 +19,7 @@ from pathlib import Path
 from s7commplus import Client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sessionkey_emulator import SESSION_KEY
+from sessionkey_emulator import KEY2, SESSION_KEY
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / ".lake" / "build" / "bin" / ("lean-s7commplus-cli.exe" if os.name == "nt" else "lean-s7commplus-cli")
@@ -28,17 +29,22 @@ KEYED = False
 
 
 def cli(port: int, *args: str) -> subprocess.CompletedProcess[str]:
-    prefix = ["--test-session-key", SESSION_KEY.hex()] if KEYED else []
+    prefix = ["--test-key2", KEY2.hex()] if KEYED else []
     return subprocess.run(
         [str(CLI), *prefix, "127.0.0.1", str(port), *args], capture_output=True, text=True, timeout=60, check=False
     )
 
 
 def patch_python_authenticator() -> None:
-    """Give the Python client the emulator's session key, as s7commplus's own tests do."""
+    """Give the Python client key2 and a fixed blob, as s7commplus's own tests do; it
+    derives the session key itself."""
     from s7commplus.v1_session_key import handshake, legitimation
+    from s7commplus.v1_session_key.key_derivation import derive_session_key
 
-    handshake.authenticate_real_plc = lambda challenge, public_key, family: (bytes(180), SESSION_KEY)  # type: ignore[assignment]
+    handshake.authenticate_real_plc = lambda challenge, public_key, family: (  # type: ignore[assignment]
+        bytes(180),
+        derive_session_key(KEY2, challenge),
+    )
     legitimation.solve_legitimate_challenge_real_plc = lambda *args: bytes(248)  # type: ignore[assignment]
 
 

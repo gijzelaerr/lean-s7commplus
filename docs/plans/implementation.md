@@ -3,8 +3,32 @@
 Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256 and
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
 Phase 7, the V1 SessionKey handshake, is under way: 7a (wire layer and a live keyed
-session against the emulator) is done, 7b–7f follow. Decision 1 is provisional
+session) and 7b (key derivation) are done, 7c–7f follow. Decision 1 is provisional
 (lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 7b results (SessionKey key derivation)
+
+- **Module** (`LeanS7CommPlus.KeyDerivation`), ported from s7commplus
+  `key_derivation.py` and `real_plc/fingerprint.py` (HarpoS7's `KeyUtilities` and
+  `HarpoFingerprint`, MIT). Its constants are generated from the s7commplus module, not
+  transcribed.
+  - `fingerprintChallenge`: the 8-byte challenge fingerprint, a 13-round
+    substitution-permutation network on AES's inverse S-box with fixed keys, wiring
+    and output encodings.
+  - `deriveSessionKey`: `HMAC-SHA256(key2[:24], fingerprint ‖ challenge[2:18])[:24]`.
+  - `deriveChallengeEncryptionKey`, `deriveSeedEncryptionKeyAndIv` and
+    `deriveLegitimationChallengeKey`, for the blob (7c) and the legitimation (7d).
+  - Proved: the fingerprint has 8 bytes and the session key 24.
+- **Known answers from s7commplus:** fingerprints of 8 challenges, session keys from 4
+  key2 values, each of the other three KDFs, and the key ids of all 25 bundled public
+  keys. A changed fingerprint vector makes the tests fail.
+- **Live.** The SessionKey pass of `integration/run.py` now gives both clients key2
+  instead of the session key. Each derives the session key from key2 and the
+  emulator's challenge (attribute 303 of the CreateObject reply), and the emulator holds
+  the key s7commplus derives. The Lean CLI option is now `--test-key2`. A wrong key2
+  makes the emulator drop the connection. Passes against s7commplus 0.3.0 and `master`.
+- **Still not checked live:** drawing key2 and building the blob (7c); the emulator
+  accepts any blob.
 
 ## Phase 7a results (SessionKey wire layer and a live keyed session)
 
@@ -92,9 +116,9 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Planned (phase 7b–7f):** the SessionKey handshake cryptography (key derivation, the
-blob, legitimation, renewal); see "Phase 7" below. 7a, the wire layer and a live
-keyed session, is done.
+**Planned (phase 7c–7f):** the rest of the SessionKey handshake cryptography (the blob,
+legitimation, renewal); see "Phase 7" below. 7a (the wire layer and a live keyed
+session) and 7b (key derivation) are done.
 
 **Out of scope:** TLS for V2 (phase 6).
 
