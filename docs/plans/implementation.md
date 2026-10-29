@@ -1,9 +1,10 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–5 done on 2026-10-29. Decision 3 now takes option (a) for SHA-256
-and HMAC-SHA256 (pure Lean, checked against `hashlib`); the SessionKey handshake (AES,
-the key blob) and TLS (phase 6) remain out of scope. "What remains" lists the rest.
-Decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are open.
+Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256 and
+HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
+Phase 7, the V1 SessionKey handshake, is planned and waits for the decisions listed
+in its section. Decision 1 is provisional (lean-s7 pinned to a commit). The other
+decisions are open.
 
 ## Phase 5d results (SHA-256 and HMAC-SHA256)
 
@@ -42,14 +43,10 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Still out of scope under decision 3:**
+**Planned (phase 7):** the V1 SessionKey handshake, and with it a live V3 session
+against the emulator; see "Phase 7" below.
 
-- The V1 SessionKey handshake: the blob layout, key derivation and AES steps, and so a
-  live V3 session against the emulator's `session_key` mode. The emulator validates a
-  SecurityKey setup only when `public_key_fingerprint` is configured, and the
-  algorithm is a port of HarpoS7 (MIT, attribution required), so it is a decision of
-  its own.
-- TLS for V2 (phase 6).
+**Out of scope:** TLS for V2 (phase 6).
 
 **Waiting for captures:**
 
@@ -518,6 +515,132 @@ TLS needs a native library; Lean core has none. Only if open decision 3 chooses
 FFI. Otherwise V2 stays out of scope and the plan says so. *Result: out of scope; see
 "Phase 6 result" above.*
 
+## Phase 7: the V1 SessionKey handshake (plan, 2026-10-29)
+
+Requested after phase 5d. This is the handshake that V1 S7-1200 (FW < V4.5) and
+S7-1500 (FW 2.6–2.9) controllers need before they accept data requests without TLS.
+The reference is s7commplus `v1_session_key/` (MIT), a port of
+[bonk-dev/HarpoS7](https://github.com/bonk-dev/HarpoS7) (MIT, attribution required).
+s7commplus has reduced HarpoS7's transpiled monoliths to a compact runtime of about 750
+lines; that runtime, not the monoliths, is what this phase ports.
+
+### What the handshake does
+
+1. CreateObject's reply carries the public-key fingerprint (`01:BD426B091F08731A`), a
+   20-byte challenge and the ServerSessionVersion. Already decoded in phase 4.
+2. The client draws key1 and key2 (24 bytes each), an IV (16 bytes) and two 20-byte
+   values for the seed, and builds the 180-byte SecurityKeyEncryptedKey blob (216
+   bytes for PLCSIM, family 03). The session key is
+   `HMAC-SHA256(key2, fingerprint(challenge) ‖ challenge[2:18])[:24]`.
+3. SetupSession, in a V2 frame, writes the SecurityKey struct (address 1830: key ids,
+   key flags, the blob) next to the ServerSessionVersion echo (address 306). Only an
+   accepted reply installs the session key.
+4. From then on every frame is V3 with an HMAC-SHA256 tag (phase 5), and requests carry
+   IntegrityIds (phase 5c). The client activates the session (SetVariable, address
+   323) and legitimates (GetVarSubstreamed of a new challenge at address 303, then
+   SetVarSubstreamed of a 248-byte answer at address 1846), with an empty password
+   too.
+5. Every 25 minutes the client renews the key: a fresh address-303 challenge, a new
+   SecurityKey write, and the new key installed only after the reply verifies under
+   the old one.
+
+### The cryptography involved
+
+| Piece | s7commplus module | Size | Evidence |
+| --- | --- | --- | --- |
+| Key id: `SHA-256(key[:24] ‖ "DERIVE")[:8]` | `utils.py` | small | SHA-256 from phase 5d |
+| KDFs: session key, challenge key, seed key and IV | `key_derivation.py` | 127 lines | SHA-256 and HMAC from phase 5d |
+| Challenge fingerprint: 13-round SPN on AES's inverse S-box | `real_plc/fingerprint.py` | 129 lines | KATs |
+| PRESENT-80 variant (seed and blob keys) | `real_plc/present.py` | 96 lines | KATs |
+| 160-bit prime-order curve, x-only Montgomery ladder | `real_plc/curve.py` | 77 lines | KATs |
+| GF(2¹²⁸) multiply for the blob checksum | `real_plc/checksum.py` | 28 lines | KATs |
+| Seed, blob keys, blob assembly with AES-128-ECB blocks | `real_plc/seed.py`, `authenticator.py`, `blob_metadata.py` | 420 lines | KATs |
+| AES-128, AES-GCM with a 24-bit counter, GHASH | `aes_ecb.py`, `aes_gcm.py`, `ghash.py` | 254 lines | FIPS-197 and Python KATs |
+| Legitimation answer (the "DEADBEEF" blob) | `legitimation.py` | 203 lines | KATs |
+| Public-key table, fingerprint parsing | `keys.py` | 208 lines | data from HarpoS7 |
+
+AES is needed by the blob (its ECB blocks) and by the legitimation answer (GCM), not
+only by passwords.
+
+### What can be checked, and against what
+
+- **The emulator cannot check the blob.** It holds a configured session key and
+  validates only the SecurityKey struct: its layout, the public key id and the key
+  flags (`_is_valid_session_key_setup`). Nobody but the controller has the private
+  key that decrypts the blob. s7commplus's own live tests therefore patch the
+  authenticator to return a fixed blob and the emulator's key. A live run against the
+  emulator checks the wire format, the key-installation order and the V3 session
+  after it; it says nothing about the blob's cryptography.
+- **The blob's cryptography is checked by known-answer tests** against s7commplus with
+  all randomness injected (key1, key2, IV, and the seed's two 20-byte draws, which
+  s7commplus takes from `os.urandom`; the vector generator patches it). The session key
+  depends only on key2 and the challenge, so it has exact KATs with no patching.
+- **Real-PLC evidence.** The s7commplus#44 capture (S7-1215C FW V4.2, in s7commplus's tests)
+  shows an accepted SetupSession, but the client randomness was not recorded, so the
+  blob cannot be regenerated; its layout, key ids and echoed values can be checked.
+  A capture whose client randomness is recorded would give the first end-to-end KAT
+  against a controller.
+- **Proofs** stay where they have been: wire round trips and canonical decoding for
+  the SecurityKey struct, the activation and the legitimation messages, and the
+  session state machine. The ciphers get KATs, not proofs of equality with their
+  specifications; a GF(2¹²⁸) or ladder algebra proof is possible later but not
+  planned.
+
+### Sub-phases (one PR each)
+
+- **7a. Wire layer and a live V3 session against the emulator.** Encoders and
+  decoders for the SecurityKey struct (addresses 1801–1805, 1826–1828), the
+  activation write, the address-303 read and the address-1846 write, with round
+  trips and canonical theorems; the s7commplus#44 SetupSession request decoded and
+  re-encoded byte for byte. Session phases extended with `keyed`, `activated`,
+  `legitimated`. Theorems: the session key is installed only by an accepted setup
+  reply; after it, every request goes out in a V3 frame sealed with that key and
+  with the next IntegrityId of its counter; a reply is accepted only if it opens
+  under that key. Live: the emulator with `session_key` and
+  `public_key_fingerprint`, the Lean client given the same key and a fixed blob
+  through an explicit test-only entry point (as s7commplus's tests do), then
+  activation, legitimation with a placeholder answer, reads, writes and browsing,
+  including state-resume fragmented replies with `max_response_pdu`. The report must
+  say that this run does not exercise the blob's cryptography.
+- **7b. Key ids and KDFs.** Key id, session key, challenge key, seed key and IV, and
+  the challenge fingerprint SPN, with KATs from s7commplus. Afterwards the session key
+  of the live run can come from a real key2 and the emulator's challenge, not a
+  pre-shared constant: configure the emulator with the key the KAT gives.
+- **7c. Blob for families 00 and 01.** PRESENT-80 variant, the curve and ladder, the
+  checksum multiply, the seed and the 180-byte blob, with AES-128 (FIPS-197 vectors)
+  for its ECB blocks. KATs: whole blobs from s7commplus with injected randomness. Lean
+  draws randomness with `IO.getRandomBytes`; the blob builder itself is a pure
+  function of the drawn bytes.
+- **7d. Legitimation.** AES-GCM with a 24-bit counter, GHASH, and the 248-byte answer,
+  with KATs. Optional password support, with the same KATs.
+- **7e. Renewal.** The 25-minute renewal, with a theorem that the new key is installed
+  only after the renewal reply verifies under the old key, and that a failed renewal
+  closes the session.
+- **7f (optional). PLCSIM, family 03.** The 216-byte blob and its legitimation.
+
+### Licensing and provenance
+
+Porting this brings HarpoS7-derived algorithms and its public-key table into the
+repository. Each ported module names its s7commplus source file and HarpoS7, the
+repository adds HarpoS7's MIT notice as `LICENSE-HarpoS7`, and the README says which
+modules derive from it. Constants are copied from the s7commplus runtime, whose tests
+check them against HarpoS7's tables; nothing is taken from HarpoS7's transpiled
+monoliths or from `thomas-v2/S7CommPlusDriver` (LGPL).
+
+### Decisions for the owner
+
+- **Port the compact s7commplus runtime with HarpoS7 attribution?** The alternative,
+  re-deriving from HarpoS7's C#, is much larger and would need the same notice.
+  *Recommended: port.*
+- **Families.** 00 and 01 (real controllers) first, PLCSIM (03) only if wanted.
+- **Test-only key injection for the live run (7a).** It mirrors s7commplus's tests;
+  without it no live V3 session against the emulator is possible before 7b, and the
+  blob is never checkable against the emulator at all.
+- **Public-key table.** Ship HarpoS7's keys as data with the notice, or require the
+  caller to supply the public key.
+- **A capture with recorded client randomness** from an S7-1200 FW V4.2, if one can be
+  made, for an end-to-end KAT.
+
 ## Evidence and hardware boundaries
 
 These are controller facts, not theorems. Each is a named parameter in the Lean
@@ -557,8 +680,8 @@ A capture qualifies only the conversation it shows, as in lean-s7's H1 gate.
    every decoder in the same PR that adds it, as lean-s7's plan now asks? That
    keeps the proofs current but slows the first live milestone.
 3. **Crypto and TLS.** *Decided 2026-10-29: plain V1 first; then option (a) for
-   SHA-256 and HMAC-SHA256 (phase 5d). AES, the SessionKey handshake and TLS stay out
-   of scope.* Lean core has no SHA, HMAC, AES or TLS. Options for later:
+   SHA-256 and HMAC-SHA256 (phase 5d). TLS stays out of scope; the SessionKey handshake,
+   with AES, is planned as phase 7.* Lean core has no SHA, HMAC, AES or TLS. Options for later:
    (a) pure-Lean implementations, checked only against known-answer vectors from
    the Python code; (b) FFI to a C library (OpenSSL or mbedTLS), which gives TLS
    too but adds a native dependency; (c) stop at plain V1 and keep crypto out of
