@@ -7,10 +7,10 @@ A command-line client for the integration tests:
     lean-s7commplus-cli HOST PORT write DB START HEX
     lean-s7commplus-cli HOST PORT browse                prints "number name" per data block
 
-With `--test-key2 HEX` first, the client opens a V1 SessionKey session with that key2
-and an all-zero blob instead of drawing key2 and building the blob; the session key is
-derived from key2 and the controller's challenge. This is for the emulator only, which
-holds a configured key and does not check the blob.
+With `--sessionkey` first, the client opens a V1 SessionKey session. With
+`--test-key2 HEX` instead, it does the same but uses that key2 rather than a random one,
+so that the session key matches the one the emulator is configured with; everything
+else in the blob is drawn at random.
 -/
 
 open LeanS7 LeanS7CommPlus
@@ -36,17 +36,18 @@ def toHex (data : ByteArray) : String :=
     String.ofList (if digits.length == 1 then '0' :: digits else digits))
 
 def usage : String :=
-  "usage: lean-s7commplus-cli [--test-key2 HEX] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
+  "usage: lean-s7commplus-cli [--sessionkey | --test-key2 HEX] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
 
 def run (args : List String) : IO UInt32 := do
-  let (testKey, args) := match args with
-    | "--test-key2" :: hex :: rest => (parseHex hex, rest)
+  let (mode, args) : Option (Option ByteArray) × List String := match args with
+    | "--sessionkey" :: rest => (some none, rest)
+    | "--test-key2" :: hex :: rest => (some (parseHex hex), rest)
     | _ => (none, args)
   match args with
   | host :: portText :: command => do
     let some port := portText.toNat? | IO.eprintln usage; return 2
-    let client ← match testKey with
-      | some key => Client.connectWithTestKey2 host (UInt16.ofNat port) key
+    let client ← match mode with
+      | some testKey2 => Client.connectSessionKey host (UInt16.ofNat port) testKey2
       | none => Client.connect host (UInt16.ofNat port)
     match command with
     | ["read", db, start, size] =>

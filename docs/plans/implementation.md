@@ -2,9 +2,44 @@
 
 Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256 and
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
-Phase 7, the V1 SessionKey handshake, is under way: 7a (wire layer and a live keyed
-session) and 7b (key derivation) are done, 7c–7f follow. Decision 1 is provisional
+Phase 7, the V1 SessionKey handshake: 7a (wire layer and a live keyed session), 7b (key
+derivation) and 7c (the blob) are done; 7d–7f follow. Decision 1 is provisional
 (lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 7c results (the SessionKey blob)
+
+- **Modules.** `LeanS7CommPlus.Aes` (AES-128 encryption, its S-box computed from the
+  definition) and `LeanS7CommPlus.Blob`, ported from s7commplus `real_plc/` and
+  `blob_metadata.py` (HarpoS7, MIT), with constants generated from the s7commplus
+  modules:
+  - `Present`: the PRESENT-80 variant;
+  - `Curve`: the x-only ladder on `y² = x³ − x + B` over GF(2¹⁶⁰ − 47);
+  - `Checksum`: GF(2)[x] modulo x¹²⁸ + x³² + x¹⁵ + x² + 1;
+  - `Seed`: the pre-seed, the ECDH seed field and the three blob keys;
+  - `buildRealPlcBlob`: the 180-byte blob and the session key, a pure function of the
+    public key, the challenge and the five random draws (key1, key2, IV, blinding,
+    ladder input).
+- **Known answers.**
+  - AES-128 on FIPS-197 C.1 and three keys from Python's `cryptography`.
+  - PRESENT, the ladder (including the point at infinity), the checksum multiply, the
+    pre-seed and the blob keys, each against s7commplus.
+  - Three whole blobs, built by s7commplus `authenticate_real_plc` with its
+    `os.urandom` recorded, equal byte for byte with their session keys. A changed
+    blob vector makes the tests fail.
+- **Real controller.** The CPU 1214C blob (s7commplus#136) has our header: magic,
+  length, constants, flags and the public key id. The key id of key2 and everything
+  after the header depend on the unrecorded random draws.
+- **Client.** `Client.connectSessionKey` draws the randomness with `IO.getRandomBytes`
+  and builds the blob; the CLI's `--sessionkey` uses it. `--test-key2` fixes only key2,
+  so that the session key matches the emulator's configured one; the other draws stay
+  random. Live: both clients build real blobs, the emulator accepts their key ids and
+  flags, and the keyed session runs. With a random key2 the emulator drops the
+  connection, as it should.
+- **Not checked.** No controller has decrypted a Lean-built blob: the emulator cannot,
+  and the only real capture lacks its random draws. Known-answer agreement with
+  s7commplus is the evidence; s7commplus's blobs were accepted
+  by real controllers (an S7-1215C in s7commplus#44, a CPU 1214C in s7commplus#136).
+  PLCSIM (family 03, a 216-byte blob) is not supported (7f, optional).
 
 ## Phase 7b results (SessionKey key derivation)
 
@@ -116,9 +151,9 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Planned (phase 7c–7f):** the rest of the SessionKey handshake cryptography (the blob,
-legitimation, renewal); see "Phase 7" below. 7a (the wire layer and a live keyed
-session) and 7b (key derivation) are done.
+**Planned (phase 7d–7f):** legitimation, key renewal and optionally PLCSIM; see
+"Phase 7" below. 7a (the wire layer and a live keyed session), 7b (key derivation) and
+7c (the blob) are done.
 
 **Out of scope:** TLS for V2 (phase 6).
 
