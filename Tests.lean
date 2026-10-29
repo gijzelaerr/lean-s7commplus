@@ -489,6 +489,43 @@ def testFrameRejections : IO Unit := do
   check (decodeFrame (hexBytes "72010004310000007201000000") matches .error _) "trailing byte"
   check (decodeFrame (hexBytes "7201000431000000720100") matches .error _) "truncated trailer"
 
+/-- The Python emulator's split of the bytes 0..19 with `max_response_pdu=8`
+    (`send_app_frame`): three fragments, the trailer after the last. -/
+def emulatorSplit : String :=
+  "7201000800010203040506077201000808090a0b0c0d0e0f720100041011121372010000"
+
+def testFragments : IO Unit := do
+  let data := (List.range 20).map UInt8.ofNat |>.toByteArray
+  match reassemble (hexBytes emulatorSplit) with
+  | .ok (version, joined) =>
+    check (version == .v1 && joined == data) "reassembled emulator split"
+  | .error error => throw <| IO.userError s!"emulator split rejected: {reprStr error}"
+  check (fragmentsComplete (hexBytes emulatorSplit)) "complete split"
+  check (encodeFragments .v1 (splitData 8 data) == hexBytes emulatorSplit) "splitData matches the emulator"
+  match decodeFragments (hexBytes emulatorSplit) with
+  | .ok (_, pieces) => check (pieces.map ByteArray.size == [8, 8, 4]) "fragment sizes"
+  | .error _ => throw <| IO.userError "fragments rejected"
+  -- Every proper prefix is incomplete, so a receiver waits for more data.
+  for cut in [0, 3, 4, 12, 13, 24, 32, 35] do
+    let head := (hexBytes emulatorSplit).extract 0 cut
+    check (!fragmentsComplete head) s!"prefix of {cut} bytes is incomplete"
+    check (reassemble head).toBool.not s!"prefix of {cut} bytes rejected"
+  let rejected : List (String × String) := [
+    ("trailing bytes", emulatorSplit ++ "00"),
+    ("second fragment changes version",
+      "72010008000102030405060772020008" ++ "08090a0b0c0d0e0f720100041011121372010000"),
+    ("empty fragment before the last", "72010000" ++ "7201000400010203" ++ "72010000"),
+    ("trailer with the wrong version", "720100040001020372020000"),
+    ("no protocol id on the second fragment",
+      "72010008000102030405060773010008" ++ "08090a0b0c0d0e0f72010000")]
+  for (label, hex) in rejected do
+    check (reassemble (hexBytes hex)).toBool.not s!"{label} rejected"
+  -- A complete frame is a message of one fragment.
+  for (label, _, hex) in sessionFrames do
+    match decodeFrame (hexBytes hex), reassemble (hexBytes hex) with
+    | .ok frame, .ok message => check (frame == message) s!"{label}: frame and reassembly agree"
+    | _, _ => throw <| IO.userError s!"{label}: frame or reassembly rejected"
+
 def main : IO Unit := do
   testFrameHeaderBytes
   testFrameVersionBytes
@@ -509,4 +546,5 @@ def main : IO Unit := do
   testPartialFailureResults
   testSessionRequests
   testFrameRejections
+  testFragments
   IO.println "All lean-s7commplus tests passed."

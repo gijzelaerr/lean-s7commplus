@@ -1,6 +1,7 @@
 import Std.Async.TCP
 import LeanS7.Transport
 import LeanS7CommPlus.Session
+import LeanS7CommPlus.Fragments
 
 /-!
 # A plain V1 client
@@ -9,6 +10,8 @@ Connects over ISO-on-TCP with the S7CommPlus TSAPs (calling `0x0600`, called
 `SIMATIC-ROOT-HMI`), opens a plain V1 session and reads, writes and browses data
 blocks. The socket, TPKT and COTP data handling come from lean-s7; this module adds
 the S7CommPlus connection request, whose called TSAP is a 16-byte name.
+
+Replies split over several fragments are reassembled.
 
 This is a test client for the Python emulator. It does not speak TLS or the
 SessionKey handshake, and a real S7-1200/1500 with access protection will refuse it.
@@ -59,14 +62,28 @@ def connectTransport (host : String) (port : UInt16) (timeoutMs : Option Nat) :
       tpduSizeExponent := 0x0a }
   pure connection
 
+/-- The most bytes of one reassembled reply, as in the Python client. -/
+def maxReplyBytes : Nat := 16 * 1024 * 1024
+
+/-- Receive ISO data units until they hold a whole, possibly fragmented, message. -/
+def receiveMessage (connection : Transport.Connection) (timeoutMs : Option Nat) : IO ByteArray := do
+  let mut buffer ← Transport.receiveData connection.socket timeoutMs
+  let mut units := 1
+  while !fragmentsComplete buffer do
+    if units ≥ maxFragments || buffer.size > maxReplyBytes then
+      throw <| IO.userError s!"reply exceeds {maxFragments} fragments or {maxReplyBytes} bytes"
+    buffer := buffer ++ (← Transport.receiveData connection.socket timeoutMs)
+    units := units + 1
+  pure buffer
+
 /-- Send a request and receive its reply: the reply header and the payload after it. -/
 def Client.exchange (client : Client) (request : Request) :
     IO (ResponseHeader × ByteArray × RequestHeader × Session) := do
   let some (frame, header, sent) := client.session.send request
     | throw <| IO.userError s!"request {request.function} is not allowed in phase {repr client.session.phase}"
   Transport.sendData client.connection.socket frame client.timeoutMs
-  let replyFrame ← Transport.receiveData client.connection.socket client.timeoutMs
-  let (_, message) ← orFail "reply frame" (decodeFrame replyFrame)
+  let replyFrame ← receiveMessage client.connection client.timeoutMs
+  let (_, message) ← orFail "reply frame" (reassemble replyFrame)
   let (reply, _) ← orFail "reply header" (decodeResponseHeader { data := message })
   pure (reply, message.extract 10 message.size, header, sent)
 

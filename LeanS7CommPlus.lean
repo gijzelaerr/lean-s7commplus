@@ -3,6 +3,7 @@ import LeanS7CommPlus.Protocol
 import LeanS7CommPlus.Vlq
 import LeanS7CommPlus.VlqSigned
 import LeanS7CommPlus.Frame
+import LeanS7CommPlus.Fragments
 import LeanS7CommPlus.PValue
 import LeanS7CommPlus.Tree
 import LeanS7CommPlus.Message

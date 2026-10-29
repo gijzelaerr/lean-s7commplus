@@ -1,9 +1,38 @@
 # Plan: a proved S7CommPlus implementation in Lean
 
-Status: phases 0–4 done on 2026-10-29. Phase 2 does not yet cover VLQ arrays, packed
+Status: phases 0–4 done on 2026-10-29; phase 5 in progress (fragment reassembly done). Phase 2 does not yet cover VLQ arrays, packed
 structs or the EXPLORE elements; phase 3 covers reads and writes of DB regions. Decision 3 is taken (plain V1 first);
 decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are
 open.
+
+## Phase 5a results (fragment reassembly)
+
+- **Fragments** (`LeanS7CommPlus.Fragments`): a message is one or more fragments
+  (`72 vv len data`) followed by one trailer `72 vv 00 00`, as the Python client's
+  `_recv_reassembled_payload` reads it: after each fragment, four bytes equal to the
+  trailer end the message, anything else must be the next fragment's header, and every
+  fragment carries the first fragment's version. A complete frame is a message of one
+  fragment (`reassemble_encodeFrame`).
+- **Theorems.** `decodeFragments_encode` and `reassemble_encodeFragments` (round trip;
+  the reassembled data is the fragments joined in order), `decodeFragments_canonical`
+  (every accepted message is exactly the encoding of its fragments),
+  `reassemble_bound` (at most `maxFragments` = 4096 fragments, as in the Python
+  client, and at most 65535 bytes per fragment), `reassemble_splitData` (reassembly
+  undoes the emulator's `max_response_pdu` split).
+- **An empty fragment is ambiguous.** Its header `72 vv 00 00` equals the trailer, so a
+  message of several fragments cannot contain one. `Fragmented` requires every fragment
+  of a multi-fragment message to be nonempty; the emulator's split never produces an
+  empty one. The Python client stops at a zero-length header (`frag_len == 0`); the
+  Lean decoder reads it as the trailer and requires the end of the message after it.
+- **Client.** `receiveMessage` reads ISO data units until the fragment headers reach a
+  trailer (`fragmentsComplete`), capped at 4096 units and 16 MiB as in the Python
+  client, then `reassemble` checks the message.
+- **Integration.** `integration/run.py` runs every check twice: against whole replies,
+  and against an emulator started with `max_response_pdu=8`, which splits every reply
+  after the session setup. With the earlier single-frame decoder, the split pass fails
+  on the first read.
+- **Not covered.** SystemEvent frames that a PLC interleaves between fragments (the
+  Python client skips up to 16), and V3 fragments, whose data carries a chained HMAC.
 
 ## Phase 4 results (plain V1 against the emulator)
 

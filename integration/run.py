@@ -1,7 +1,8 @@
 """End-to-end test of the Lean client against the Python s7commplus emulator.
 
 Starts integration/emulator.py, runs lean-s7commplus-cli against it, and checks each
-result against the emulator's data and against the Python client.
+result against the emulator's data and against the Python client. The checks run
+twice: against whole replies, and against replies split into 8-byte fragments.
 
 usage: run.py
 """
@@ -29,9 +30,11 @@ def expect(condition: bool, message: str) -> None:
     print(f"ok: {message}")
 
 
-def main() -> None:
+def run_checks(max_response_pdu: int | None) -> None:
+    arguments = [] if max_response_pdu is None else [str(max_response_pdu)]
+    print(f"emulator max_response_pdu={max_response_pdu}")
     emulator = subprocess.Popen(
-        [sys.executable, str(ROOT / "integration" / "emulator.py")],
+        [sys.executable, str(ROOT / "integration" / "emulator.py"), *arguments],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
@@ -42,6 +45,8 @@ def main() -> None:
 
         read = cli(port, "read", "1", "2", "4")
         expect(read.returncode == 0 and read.stdout.strip() == "02030405", f"read DB1.2..6: {read.stdout!r} {read.stderr!r}")
+        whole = cli(port, "read", "1", "0", "16")
+        expect(whole.stdout.strip() == bytes(range(16)).hex(), f"read DB1.0..16: {whole.stdout!r} {whole.stderr!r}")
 
         write = cli(port, "write", "1", "0", "aabb")
         expect(write.returncode == 0, f"write DB1.0..2: {write.stderr!r}")
@@ -68,6 +73,11 @@ def main() -> None:
         if emulator.stdin is not None:
             emulator.stdin.close()
         emulator.wait(timeout=30)
+
+
+def main() -> None:
+    run_checks(None)
+    run_checks(8)
     print("integration: all checks passed")
 
 

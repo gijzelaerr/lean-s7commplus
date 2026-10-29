@@ -10,7 +10,7 @@ version byte and a zero word.
 
 This module covers complete single-fragment frames, as in every frame of the
 s7commplus#136 capture. PDUs that a controller splits over several fragments are
-reassembled in a later phase.
+reassembled in `LeanS7CommPlus.Fragments`.
 -/
 
 namespace LeanS7CommPlus

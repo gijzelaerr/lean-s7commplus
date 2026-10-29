@@ -1,9 +1,10 @@
 """Run the Python s7commplus emulator for the Lean client.
 
 Prints the port on the first line, then serves until stdin closes. DB1 holds the
-bytes 0..15, DB7 four zero bytes.
+bytes 0..15, DB7 four zero bytes. With MAX_RESPONSE_PDU, the emulator splits every
+reply after the session setup into fragments of at most that many bytes.
 
-usage: emulator.py
+usage: emulator.py [MAX_RESPONSE_PDU]
 """
 
 import socket
@@ -19,7 +20,8 @@ def free_port() -> int:
 
 
 def main() -> None:
-    server = S7CommPlusServer()
+    max_response_pdu = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    server = S7CommPlusServer(max_response_pdu=max_response_pdu)
     server.register_raw_db(1, bytearray(range(16)))
     server.register_raw_db(7, bytearray(4))
     port = free_port()
