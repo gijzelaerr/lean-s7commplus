@@ -4,10 +4,25 @@ Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
 PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
-for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ),
-8b (PValues), 8c (trees), 8d (session payloads) and 8e (GetMultiVariables and
-IntegrityIds) are done, 8f is not started. Decision 1 is provisional (lean-s7 pinned
-to a commit). The other decisions are open.
+for the decoders that predate that rule, is done (8a–8f, 2026-11-11): every
+decoder has a canonical-form, proved-leniency or lossy characterisation theorem, or an
+explicit out-of-scope line. Decision 1 is provisional (lean-s7 pinned to a commit).
+The other decisions are open.
+
+## Phase 8f results (SetMultiVariables)
+
+No decoder changed. With 8f, phase 8 is done: every decoder in the classification table
+has a canonical-form, proved-leniency or lossy characterisation theorem, or an
+explicit out-of-scope line.
+
+- **`decodeNumberedValues_canonical`** (`NumberedForm`): the values numbered from
+  `first`, each number in any 32-bit VLQ form. The list ends with a single `00` byte,
+  which is strict, unlike a read reply's item 0, which may be padded.
+- **`decodeWriteRequestBody_canonical`** and **`decodeWriteRequest_canonical`**: as
+  for reads, an equation for the whole payload (`body ++ idBytes ++ uint32BE 0`). The
+  body's value count equals its address count.
+- **`decodeWriteReply_canonical`** (`WriteReply.Form`): a return value and an error
+  list.
 
 ## Phase 8e results (GetMultiVariables and IntegrityIds)
 
@@ -365,8 +380,8 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Planned (phase 8):** canonical-form theorems for the decoders that only have round
-trips (see "Phase 8" below). Needs no hardware.
+**Phase 8 is done.** Every decoder now has a canonical-form, proved-leniency or lossy
+characterisation theorem (see the phase 8 results).
 
 **lean-s7 pin:** `lakefile.toml` pins lean-s7 `main` at `69dbcb8` until lean-s7 0.3.0
 is tagged. lean-s7 is still at 0.2.0; moving the pin waits for that release.
@@ -1007,7 +1022,7 @@ theorem characterises the input instead of re-encoding it).
 | `decodeObjectQualifier` | yes | yes (8e) | strict prefix; the fixed form is strict, the VLQ form has VLQ freedom and a zero terminator | done |
 | `decodeReadRequest`, `decodeReadRequestBody`, `decodeReadReply`, `decodeValueList`, `decodeErrorList` | yes | yes (8e) | through the above; the list terminators (item 0) may be padded | done |
 | `decodeLeadingIntegrityId`, `decodeTrailingIntegrityId` | yes | yes (8e) | lenient through VLQ; the trailing form requires exactly `tail` zero bytes | done |
-| `decodeWriteRequest`, `decodeWriteRequestBody`, `decodeNumberedValues`, `decodeWriteReply` | yes | no | through the above; the fill must be zero | 8f |
+| `decodeWriteRequest`, `decodeWriteRequestBody`, `decodeNumberedValues`, `decodeWriteReply` | yes | yes (8f) | through the above; values numbered from 1 in any VLQ form, a strict `00` terminator, a zero fill | done |
 | `parseFingerprint` | no | characterised (8d) | lossy and not a wire decoder: it parses a string and upper-cases the key id | done |
 | `Client.decodeName` | no | no | lossy display helper for browse results (`Char.ofNat` maps invalid code points). Out of scope | — |
 | `findFingerprint`, `findChallenge`, `attributeBytes` | — | — | projections over a decoded tree, not decoders. Out of scope | — |
