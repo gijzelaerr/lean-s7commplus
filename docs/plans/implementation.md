@@ -4,8 +4,42 @@ Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
 PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
-for the decoders that predate that rule, is planned (2026-11-11) and not started.
-Decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are open.
+for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ) is
+done, 8b–8f are not started. Decision 1 is provisional (lean-s7 pinned to a commit).
+The other decisions are open.
+
+## Phase 8a results (64-bit VLQ and the group-count encoders)
+
+Every VLQ decoder now has a canonical theorem and the matching acceptance theorems, so
+together they describe exactly what each decoder accepts. No decoder changed.
+
+- **`readGroupsThenByte_bytes`**: the bytes the 64-bit reader consumes are either one to
+  eight groups, the last without a continuation flag, or eight continuation groups and
+  a full ninth byte.
+- **`decodeUInt64_canonical`**: an accepted unsigned 64-bit VLQ is
+  `encodeNatPadded zeros value` (the minimal encoding after `zeros` leading `0x80`
+  bytes) or `encodeUInt64Long value`. **`decodeUInt64_encodeNatPadded`** and
+  **`decodeUInt64_encodeUInt64Long`**: both forms are accepted, the second for every
+  value, so `80 80 80 80 80 80 80 80 05` decodes to 5. `encodeUInt64_of_le`: the
+  encoder's own long form, from 2⁵⁶ up, is `encodeUInt64Long`.
+- **`decodeInt64_canonical`**: an accepted signed 64-bit VLQ is
+  `encodeSignedGroups count value` for one to eight groups, or `encodeInt64Long value`.
+  **`decodeInt64_encodeSignedGroups`** and **`decodeInt64_encodeInt64Long`**: both
+  are accepted, the long form for every value. `encodeInt64_of_le`: the encoder's
+  long form, for magnitudes from 2⁵⁵ up.
+- **`decodeUInt32_encodeNatPadded`** and **`decodeInt32_encodeSignedGroups`**: the
+  32-bit acceptance theorems. With the existing `decodeUInt32_canonical` and
+  `decodeInt32_canonical` they close the 32-bit characterisation. The padded form in
+  `decodeUInt32_canonical` is, by definition, `encodeNatPadded zeros value.toNat`, so
+  that theorem is unchanged.
+- `foldl_lt` moved from `VlqSigned` to `Vlq`, which both 64-bit proofs need.
+
+**Python agrees.** `s7commplus`'s `decode_uint64_vlq` and `decode_int64_vlq` read the
+same nine-byte form: after eight continuation groups, the ninth byte is data. So the
+long-form leniency is shared with the reference, not a divergence. `integration/fuzz.py`
+now also seeds padded and nine-byte forms. Over 4270 inputs, accept-different is 0.
+
+The statements are in cursor form, so 8b–8f can use them for every VLQ field.
 
 ## Phase 7e results (key renewal)
 
@@ -845,8 +879,8 @@ theorem characterises the input instead of re-encoding it).
 | --- | --- | --- | --- | --- |
 | `Vlq.decodeUInt32`, `Vlq.decodeInt32` | yes | yes | lenient: leading `0x80` groups (unsigned) or sign groups (signed) | done |
 | `decodeFrame`, `decodeFragments`, `readFragment`, `decodeRequestHeader`, `decodeResponseHeader`, `decodeIntegrityEnvelope`, `openV3`, `openFragments`, `Keyed.openReply` | yes | yes | strict, apart from the two reserved header words | done |
-| `Vlq.decodeUInt64` | yes | no | lenient: leading `0x80` groups, and a nine-byte form for every value. After eight continuation groups the ninth byte counts all 8 bits, so any value below 2⁶⁴ is also eight groups carrying its top 56 bits followed by its low byte. `encodeUInt64` uses that form only from 2⁵⁶ up; below that, both forms are accepted (e.g. `80 80 80 80 80 80 80 80 05` decodes to 5) | 8a |
-| `Vlq.decodeInt64` | yes | no | lenient: sign-group padding, plus the nine-byte form with width 2⁶⁴ | 8a |
+| `Vlq.decodeUInt64` | yes | yes (8a) | lenient: leading `0x80` groups, and a nine-byte form for every value. After eight continuation groups the ninth byte counts all 8 bits, so any value below 2⁶⁴ is also eight groups carrying its top 56 bits followed by its low byte. `encodeUInt64` uses that form only from 2⁵⁶ up; below that, both forms are accepted (e.g. `80 80 80 80 80 80 80 80 05` decodes to 5) | done |
+| `Vlq.decodeInt64` | yes | yes (8a) | lenient: sign-group padding, plus the nine-byte form with width 2⁶⁴ | done |
 | `decodeBytes`, `decodePValue`, `decodePValueBody` | yes | no | strict flags byte (must be 0); `real` and `lreal` are kept as raw bits, so no float loss. Lenient only through the VLQ fields: `udint`, `aid`, `dint`, `ulint`, `lint`, `timespan`, the BLOB root and the BLOB/WSTRING lengths | 8b |
 | `decodeValue`, `decodeArray`, `decodeItem`, `decodeItems`, `decodeTree` | yes | no | lenient through PValue and VLQ; the stack and the fuel bound may add more (to classify) | 8c |
 | `decodeSecurityKey` | yes | no | through the tree codec; to classify | 8d |

@@ -26,11 +26,22 @@ Implemented and proved so far:
   `Vlq.encodeUInt32_size` and `Vlq.encodeUInt64_size`: one to five and one to nine
   bytes. `Vlq.decodeUInt32_canonical`: the only non-minimal input the decoder
   accepts is the minimal encoding preceded by `0x80` bytes (leading zero groups).
+  `Vlq.decodeUInt64_canonical`: a 64-bit VLQ is either that short form or the
+  nine-byte form `encodeUInt64Long`, eight continuation groups and a ninth byte
+  carrying eight bits. The encoder uses the long form from 2⁵⁶ up, but the decoder,
+  like the Python reference, accepts it for every value: `80 80 80 80 80 80 80 80 05`
+  is 5. `Vlq.decodeUInt32_encodeNatPadded`, `Vlq.decodeUInt64_encodeNatPadded` and
+  `Vlq.decodeUInt64_encodeUInt64Long`: all of these forms are accepted, so the
+  canonical theorems describe exactly what the decoders accept.
 - **Signed VLQ** (`LeanS7CommPlus.VlqSigned`). `Vlq.decodeInt32_encodeInt32` and
   `Vlq.decodeInt64_encodeInt64`: round trips inside arbitrary surrounding bytes.
   `Vlq.decodeInt32_canonical`: the accepted bytes are exactly the two's-complement
   pattern of the value over the number of groups read; the group count is the only
-  freedom.
+  freedom. `Vlq.decodeInt64_canonical`: the same over one to eight groups, or the
+  nine-byte form `encodeInt64Long` of the 64-bit pattern, accepted for every value
+  (`Vlq.decodeInt64_encodeInt64Long`). `Vlq.decodeInt32_encodeSignedGroups` and
+  `Vlq.decodeInt64_encodeSignedGroups`: any group count that leaves room for the sign
+  is accepted, not only the encoder's.
 - **Scalar PValues** (`LeanS7CommPlus.PValue`): all 22 scalar datatypes, BLOB and
   WSTRING. `decodePValue_encode`: decoding the encoding of any value, inside
   arbitrary surrounding bytes, returns it and consumes exactly its encoding.

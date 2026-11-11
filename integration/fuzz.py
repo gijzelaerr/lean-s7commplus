@@ -43,6 +43,18 @@ def seeds() -> list[tuple[str, bytes]]:
         out.append(("i32", vlq.encode_int32_vlq(value)))
     for value in [0, -1, -64, 2**55 - 1, -(2**55), 2**63 - 1, -(2**63)]:
         out.append(("i64", vlq.encode_int64_vlq(value)))
+    # Forms the encoders never write but both decoders accept: leading zero or sign
+    # groups, and the nine-byte 64-bit form of small values (decodeUInt64_canonical,
+    # decodeInt64_canonical).
+    nine = bytes([0x80] * 8)
+    for kind, hexed in [
+        ("u32", "8005"), ("u32", "8080808005"),
+        ("u64", "80808005"), ("u64", nine.hex() + "05"), ("u64", nine.hex() + "ff"),
+        ("u64", "80808080808080" + "8100"),
+        ("i32", "ff7f"), ("i32", "8005"),
+        ("i64", "ff7f"), ("i64", nine.hex() + "05"), ("i64", "ff" * 9),
+    ]:
+        out.append((kind, bytes.fromhex(hexed)))
     typed = [
         (DataType.NULL, b""), (DataType.BOOL, b"\x01"), (DataType.USINT, b"\xab"), (DataType.UINT, b"\x12\x34"),
         (DataType.UDINT, struct.pack(">I", 0x12345678)), (DataType.ULINT, struct.pack(">Q", 2**60)),

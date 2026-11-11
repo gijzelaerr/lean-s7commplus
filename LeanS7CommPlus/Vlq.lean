@@ -552,4 +552,295 @@ theorem decodeUInt64_encodeUInt64 (value : UInt64) (pre suffix : ByteArray) :
       UInt64.ofNat_toNat]
     simp [hpadded]
 
+/-! ## Canonical form of the 64-bit VLQ
+
+An unsigned 64-bit VLQ has two forms. The short form is one to eight groups, the last
+without a continuation flag; as for 32 bits, its only freedom is leading `0x80` groups.
+The long form is eight continuation groups and a ninth byte that carries all eight bits.
+The encoder uses it from 2^56 up, but the decoder accepts it for every value, and so
+does the Python reference: `80 80 80 80 80 80 80 80 05` decodes to 5. -/
+
+/-- The minimal encoding preceded by `zeros` leading zero groups (`0x80` bytes). -/
+def encodeNatPadded (zeros value : Nat) : ByteArray :=
+  (List.replicate zeros (0x80 : UInt8)).toByteArray ++ encodeNat value
+
+/-- The nine-byte form: eight continuation groups for the top 56 bits, padded with
+    `0x80`, then the low byte. -/
+def encodeUInt64Long (value : UInt64) : ByteArray :=
+  let high := (groups (value.toNat / 256)).reverse
+  (List.replicate (8 - high.length) (0x80 : UInt8) ++
+    high.map (fun group => UInt8.ofNat (group + 128)) ++
+    [UInt8.ofNat (value.toNat % 256)]).toByteArray
+
+/-- The encoder's long form is `encodeUInt64Long`. -/
+theorem encodeUInt64_of_le (value : UInt64) (h : 2 ^ 56 ≤ value.toNat) :
+    encodeUInt64 value = encodeUInt64Long value := by
+  simp [encodeUInt64, encodeUInt64Long, show ¬ value.toNat < 2 ^ 56 by omega]
+
+theorem foldl_lt (gs : List Nat) (hlt : ∀ group ∈ gs, group < 128) :
+    gs.foldl (fun accumulator group => accumulator * 128 + group) 0 < 128 ^ gs.length := by
+  obtain ⟨l, rfl⟩ : ∃ l : List Nat, gs = l.reverse := ⟨gs.reverse, by simp⟩
+  induction l with
+  | nil => simp
+  | cons last init ih =>
+    simp only [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil,
+      List.length_append, List.length_reverse, List.length_cons, List.length_nil] at hlt ⊢
+    have hl := hlt last (by simp)
+    have hi := ih (fun g hg => hlt g (by simp [hg]))
+    rw [List.length_reverse] at hi
+    rw [Nat.pow_succ]
+    generalize 128 ^ init.length = power at hi ⊢
+    generalize init.reverse.foldl (fun accumulator group => accumulator * 128 + group) 0 = folded at hi ⊢
+    have : (folded + 1) * 128 ≤ power * 128 := Nat.mul_le_mul_right 128 hi
+    omega
+
+/-- The bytes `readGroupsThenByte` consumes: either one to `limit` groups, the last
+    without a continuation flag, or `limit` continuation groups and a full byte. -/
+theorem readGroupsThenByte_bytes (limit accumulator value : Nat) (cursor next : Cursor)
+    (h : readGroupsThenByte limit accumulator cursor = .ok (value, next)) :
+    next.data = cursor.data ∧
+      ((∃ gs : List Nat, gs ≠ [] ∧ (∀ group ∈ gs, group < 128) ∧
+          gs.length ≤ limit ∧ next.offset = cursor.offset + gs.length ∧
+          cursor.data.extract cursor.offset next.offset = (encodeGroups gs).toByteArray ∧
+          value = gs.foldl (fun accumulator group => accumulator * 128 + group) accumulator) ∨
+        (∃ (gs : List Nat) (last : UInt8), (∀ group ∈ gs, group < 128) ∧
+          gs.length = limit ∧ next.offset = cursor.offset + limit + 1 ∧
+          cursor.data.extract cursor.offset next.offset =
+            (gs.map (fun group => UInt8.ofNat (group + 128)) ++ [last]).toByteArray ∧
+          value = gs.foldl (fun accumulator group => accumulator * 128 + group) accumulator * 256 +
+            last.toNat)) := by
+  induction limit generalizing accumulator cursor with
+  | zero =>
+    simp only [readGroupsThenByte, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i read byteCursor hread
+      obtain ⟨hlt, hbyte, hnext⟩ := Cursor.readUInt8_value _ _ _ hread
+      simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      refine ⟨by rw [hnext], Or.inr ⟨[], byteCursor.fst, by simp, rfl, by simp [hnext], ?_,
+        by simp⟩⟩
+      rw [hnext]
+      simp only [List.map_nil, List.nil_append]
+      rw [ByteArray.extract_one _ _ hlt, hbyte]
+      rfl
+  | succ limit ih =>
+    simp only [readGroupsThenByte, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i read byteCursor hread
+      obtain ⟨hlt, hbyte, hnext⟩ := Cursor.readUInt8_value _ _ _ hread
+      have hb := byteCursor.fst.toNat_lt
+      split at h
+      · rename_i hsmall
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        refine ⟨by rw [hnext], Or.inl ⟨[byteCursor.fst.toNat], by simp, by simpa using hsmall,
+          by simp, by rw [hnext]; simp, ?_, by simp [Nat.mod_eq_of_lt hsmall]⟩⟩
+        rw [hnext]
+        simp only [encodeGroups, UInt8.ofNat_toNat]
+        rw [ByteArray.extract_one _ _ hlt, hbyte]
+        rfl
+      · rename_i hlarge
+        obtain ⟨hdata, hcases⟩ := ih _ _ h
+        rw [hnext] at hdata
+        simp only at hdata
+        have hfirst : UInt8.ofNat (byteCursor.fst.toNat % 128 + 128) = byteCursor.fst := by
+          apply UInt8.toNat_inj.mp
+          rw [UInt8.toNat_ofNat']
+          omega
+        have hhead : [cursor.data[cursor.offset]].toByteArray =
+            cursor.data.extract cursor.offset (cursor.offset + 1) :=
+          (ByteArray.extract_one _ _ hlt).symm
+        have hmem : ∀ gs : List Nat, (∀ group ∈ gs, group < 128) →
+            ∀ group ∈ byteCursor.fst.toNat % 128 :: gs, group < 128 := by
+          intro gs hgs group hgroup
+          simp only [List.mem_cons] at hgroup
+          rcases hgroup with rfl | hgroup
+          · omega
+          · exact hgs group hgroup
+        refine ⟨hdata, ?_⟩
+        rcases hcases with ⟨gs, hne, hgs, hlen, hoff, hext, hval⟩ |
+            ⟨gs, last, hgs, hlen, hoff, hext, hval⟩
+        · rw [hnext] at hoff hext
+          simp only at hoff hext
+          refine Or.inl ⟨(byteCursor.fst.toNat % 128) :: gs, by simp, hmem gs hgs,
+            by simp; omega, by simp; omega, ?_, by simp [hval]⟩
+          obtain ⟨first, rest, rfl⟩ : ∃ first rest, gs = first :: rest := by
+            cases gs with
+            | nil => exact absurd rfl hne
+            | cons first rest => exact ⟨first, rest, rfl⟩
+          have hlist : encodeGroups (byteCursor.fst.toNat % 128 :: first :: rest) =
+              [UInt8.ofNat (byteCursor.fst.toNat % 128 + 128)] ++ encodeGroups (first :: rest) := by
+            simp [encodeGroups]
+          rw [hlist, List.toByteArray_append, ← hext, hfirst, ← hbyte, hhead,
+            ByteArray.extract_append_extract_of_le _ (by omega) (by omega)]
+        · rw [hnext] at hoff hext
+          simp only at hoff hext
+          refine Or.inr ⟨(byteCursor.fst.toNat % 128) :: gs, last, hmem gs hgs, by simp [hlen],
+            by omega, ?_, by simp [hval]⟩
+          have hlist : List.map (fun group => UInt8.ofNat (group + 128))
+                (byteCursor.fst.toNat % 128 :: gs) ++ [last] =
+              [UInt8.ofNat (byteCursor.fst.toNat % 128 + 128)] ++
+                (gs.map (fun group => UInt8.ofNat (group + 128)) ++ [last]) := by
+            simp
+          rw [hlist, List.toByteArray_append, ← hext, hfirst, ← hbyte, hhead,
+            ByteArray.extract_append_extract_of_le _ (by omega) (by omega)]
+
+/-- Canonical form of an unsigned 64-bit VLQ. The bytes the decoder accepts are either
+    the short form, the minimal encoding preceded by leading `0x80` groups, or the long
+    nine-byte form `encodeUInt64Long`. Nothing else. -/
+theorem decodeUInt64_canonical (cursor next : Cursor) (value : UInt64)
+    (h : decodeUInt64 cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ next.offset ≤ cursor.offset + 9 ∧
+      ((∃ zeros, cursor.data.extract cursor.offset next.offset =
+          encodeNatPadded zeros value.toNat) ∨
+        cursor.data.extract cursor.offset next.offset = encodeUInt64Long value) := by
+  simp only [decodeUInt64, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i read result hread
+    split at h
+    · rename_i hrange
+      simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      have hval64 : (UInt64.ofNat result.fst).toNat = result.fst := by
+        rw [UInt64.toNat_ofNat']
+        exact Nat.mod_eq_of_lt hrange
+      obtain ⟨hdata, hcases⟩ := readGroupsThenByte_bytes _ _ _ _ _ hread
+      refine ⟨hdata, ?_, ?_⟩
+      · rcases hcases with ⟨gs, _, _, hlen, hoff, _, _⟩ | ⟨gs, last, _, hlen, hoff, _, _⟩ <;>
+          omega
+      · rcases hcases with ⟨gs, hne, hgs, hlen, hoff, hext, hval⟩ |
+            ⟨gs, last, hgs, hlen, hoff, hext, hval⟩
+        · left
+          obtain ⟨zeros, hz⟩ := groups_normal_form gs hne hgs
+          refine ⟨zeros, ?_⟩
+          rw [hext, hz, ← hval, encodeGroups_replicate_append _ _ (by
+            simpa using groups_ne_nil result.fst), List.toByteArray_append, hval64]
+          rfl
+        · right
+          have hlast := last.toNat_lt
+          have hne : gs ≠ [] := by
+            intro hnil
+            simp [hnil] at hlen
+          obtain ⟨zeros, hz⟩ := groups_normal_form gs hne hgs
+          have hdiv : result.fst / 256 =
+              gs.foldl (fun accumulator group => accumulator * 128 + group) 0 := by
+            rw [hval]; omega
+          have hmod : result.fst % 256 = last.toNat := by
+            rw [hval]; omega
+          have hzeros : 8 - (groups (result.fst / 256)).reverse.length = zeros := by
+            have := congrArg List.length hz
+            simp only [List.length_append, List.length_replicate, List.length_reverse] at this
+            rw [List.length_reverse, hdiv]
+            omega
+          have hgs : gs.map (fun group => UInt8.ofNat (group + 128)) =
+              List.replicate zeros (0x80 : UInt8) ++
+                (groups (result.fst / 256)).reverse.map (fun group => UInt8.ofNat (group + 128)) := by
+            conv => lhs; rw [hz]
+            rw [hdiv, List.map_append, List.map_replicate]
+            rfl
+          rw [hext, encodeUInt64Long]
+          simp only [hval64]
+          rw [hzeros, hmod, UInt8.ofNat_toNat, hgs]
+    · simp [throw, throwThe, MonadExceptOf.throw] at h
+
+/-- The decoder accepts the short form with leading zero groups, up to eight groups. -/
+theorem decodeUInt64_encodeNatPadded (zeros : Nat) (value : UInt64)
+    (hfit : zeros + (groups value.toNat).length ≤ 8) (pre suffix : ByteArray) :
+    decodeUInt64 { data := pre ++ (encodeNatPadded zeros value.toNat ++ suffix), offset := pre.size } =
+      .ok (value,
+        { data := pre ++ (encodeNatPadded zeros value.toNat ++ suffix),
+          offset := pre.size + (encodeNatPadded zeros value.toNat).size }) := by
+  have hlt := value.toNat_lt
+  have hne := groups_ne_nil value.toNat
+  have hpadded : encodeNatPadded zeros value.toNat =
+      (encodeGroups (List.replicate zeros 0 ++ (groups value.toNat).reverse)).toByteArray := by
+    rw [encodeGroups_replicate_append _ _ (by simpa using hne), List.toByteArray_append]
+    rfl
+  have hread := readGroupsThenByte_encodeGroups (List.replicate zeros 0 ++ (groups value.toNat).reverse)
+    (by simp [hne])
+    (by
+      intro g hg
+      simp only [List.mem_append, List.mem_replicate, List.mem_reverse] at hg
+      rcases hg with ⟨_, rfl⟩ | hg
+      · omega
+      · exact groups_lt _ g hg)
+    8 0 (by simp; omega) pre suffix
+  rw [foldl_replicate_zero, foldl_groups] at hread
+  unfold decodeUInt64
+  rw [hpadded, hread]
+  simp only [bind, Except.bind, show value.toNat < 2 ^ 64 from hlt, if_true, pure, Except.pure,
+    UInt64.ofNat_toNat]
+  simp [encodeGroups_length]
+
+/-- The decoder accepts the long form of every value, not only from 2^56 up. -/
+theorem decodeUInt64_encodeUInt64Long (value : UInt64) (pre suffix : ByteArray) :
+    decodeUInt64 { data := pre ++ (encodeUInt64Long value ++ suffix), offset := pre.size } =
+      .ok (value,
+        { data := pre ++ (encodeUInt64Long value ++ suffix),
+          offset := pre.size + (encodeUInt64Long value).size }) := by
+  have hlt := value.toNat_lt
+  unfold decodeUInt64
+  have hhigh := groups_length_le (value.toNat / 256) 7 (by
+    show value.toNat / 256 < 128 ^ 8
+    omega)
+  let high := (groups (value.toNat / 256)).reverse
+  let padded := List.replicate (8 - high.length) 0 ++ high
+  have hpadded : padded.length = 8 := by
+    simp only [padded, high, List.length_append, List.length_replicate, List.length_reverse]
+    omega
+  have hpadlt : ∀ group ∈ padded, group < 128 := by
+    intro g hg
+    simp only [padded, high, List.mem_append, List.mem_replicate, List.mem_reverse] at hg
+    rcases hg with ⟨_, rfl⟩ | hg
+    · omega
+    · exact groups_lt _ g hg
+  have henc : encodeUInt64Long value =
+      (padded.map (fun group => UInt8.ofNat (group + 128)) ++
+        [UInt8.ofNat (value.toNat % 256)]).toByteArray := by
+    simp only [encodeUInt64Long, padded, high, List.map_append, List.map_replicate]
+    rfl
+  have hread := readGroupsThenByte_continued padded hpadlt 0 (UInt8.ofNat (value.toNat % 256))
+    pre suffix
+  rw [hpadded, foldl_replicate_zero, foldl_groups] at hread
+  have hvalue : value.toNat / 256 * 256 + (UInt8.ofNat (value.toNat % 256)).toNat = value.toNat := by
+    rw [UInt8.toNat_ofNat']
+    omega
+  rw [henc, hread, hvalue]
+  simp only [bind, Except.bind, show value.toNat < 2 ^ 64 from hlt, if_true, pure, Except.pure,
+    UInt64.ofNat_toNat]
+  simp [hpadded]
+
+/-- The decoder accepts the 32-bit short form with leading zero groups, up to five
+    groups. With `decodeUInt32_canonical`, this is exactly what it accepts. -/
+theorem decodeUInt32_encodeNatPadded (zeros : Nat) (value : UInt32)
+    (hfit : zeros + (groups value.toNat).length ≤ 5) (pre suffix : ByteArray) :
+    decodeUInt32 { data := pre ++ (encodeNatPadded zeros value.toNat ++ suffix), offset := pre.size } =
+      .ok (value,
+        { data := pre ++ (encodeNatPadded zeros value.toNat ++ suffix),
+          offset := pre.size + (encodeNatPadded zeros value.toNat).size }) := by
+  have hlt := value.toNat_lt
+  have hne := groups_ne_nil value.toNat
+  have hpadded : encodeNatPadded zeros value.toNat =
+      (encodeGroups (List.replicate zeros 0 ++ (groups value.toNat).reverse)).toByteArray := by
+    rw [encodeGroups_replicate_append _ _ (by simpa using hne), List.toByteArray_append]
+    rfl
+  have hread := readGroups_encodeGroups (List.replicate zeros 0 ++ (groups value.toNat).reverse)
+    (by simp [hne])
+    (by
+      intro g hg
+      simp only [List.mem_append, List.mem_replicate, List.mem_reverse] at hg
+      rcases hg with ⟨_, rfl⟩ | hg
+      · omega
+      · exact groups_lt _ g hg)
+    5 0 (by simp; omega) pre suffix
+  rw [foldl_replicate_zero, foldl_groups] at hread
+  unfold decodeUInt32
+  rw [hpadded, hread]
+  simp only [bind, Except.bind, show value.toNat < 2 ^ 32 from hlt, if_true, pure, Except.pure,
+    UInt32.ofNat_toNat]
+  simp [encodeGroups_length]
+
 end LeanS7CommPlus.Vlq
