@@ -8,7 +8,7 @@ for the decoders that predate that rule, is done (8a–8f, 2026-11-11): every
 decoder in its classification table has a canonical-form, proved-leniency or lossy
 characterisation theorem, or an explicit out-of-scope line. Phase 9, the controller
 bytes the client still parses inline, is done (9a and 9b, 2026-11-11). Decision 1 is
-provisional (lean-s7 pinned to a commit). The other decisions are open.
+decided (lean-s7 pinned to its 0.3.0 release). The other decisions are open.
 
 ## Phase 9b results (response IntegrityId profiles)
 
@@ -442,8 +442,8 @@ The phases are done as far as the decisions allow. What is left, and what it wai
 S7-1500, PLCSIM and the S7-1200 functions not listed come from s7commplus's rules, not
 from Lean-side captures; a capture of each would confirm them.
 
-**lean-s7 pin:** `lakefile.toml` pins lean-s7 `main` at `69dbcb8` until lean-s7 0.3.0
-is tagged. lean-s7 is still at 0.2.0; moving the pin waits for that release.
+**lean-s7 pin:** done. `lakefile.toml` pins lean-s7 `v0.3.0` (released 2026-11-11),
+which contains `69dbcb8`, the commit pinned before.
 
 **Optional (phase 7f):** PLCSIM's key family 03 (a 216-byte blob, an AES-GCM
 legitimation answer, and its own request layouts), only if wanted. Phase 7 (7a–7e) is
@@ -1272,7 +1272,7 @@ A capture qualifies only the conversation it shows, as in lean-s7's H1 gate.
 
 ## Open decisions for the owner
 
-1. **Depend on lean-s7?** *Provisional: yes, pinned to a commit.* A Lake
+1. **Depend on lean-s7?** *Decided: yes, pinned to lean-s7 `v0.3.0` (2026-11-11).* A Lake
    dependency reuses `Binary`/`Cursor`, TPKT, COTP and the reverse-read and
    `ByteArray.extract` lemmas from the canonical-decoding work, and ties this repo
    to lean-s7's toolchain. Those lemmas landed after lean-s7 0.2.0, so phase 0
