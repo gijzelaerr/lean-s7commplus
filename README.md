@@ -54,7 +54,12 @@ Implemented and proved so far:
 - **Object trees** (`LeanS7CommPlus.Tree`): objects, attributes, relations, fixed-size
   arrays and nested structs, read as a flat item sequence with a stack.
   `decodeValue_encode` and `decodeTree_encode`: any well-nested tree, inside arbitrary
-  surrounding bytes, decodes to exactly its items. The CreateObject request and reply
+  surrounding bytes, decodes to exactly its items. `decodeTree_canonical`: an accepted
+  tree is a well-nested item sequence that closes the outermost object (`Closes [] items`),
+  and its bytes are the items' accepted forms back to back (`ItemsForm`). Tags, struct
+  headers, big-endian ids and array flags are exact; the only freedom is the VLQ fields
+  and the PValues inside. `itemsForm_encodeItems`: the encoder's bytes are one of those
+  forms. The CreateObject request and reply
   trees of the CPU 1214C session decode and re-encode byte for byte.
 - **Message headers and the integrity envelope** (`LeanS7CommPlus.Message`): the
   14-byte request header, the 10-byte response header, and the V3 envelope (`0x20`,

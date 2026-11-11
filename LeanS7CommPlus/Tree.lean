@@ -630,4 +630,385 @@ theorem decodeTree_encode (items : List Item) (hcloses : Closes [] items)
   simp only [Cursor.remaining, ByteArray.size_append]
   omega
 
+/-! ## Canonical form
+
+The tree decoders add no freedom of their own: tags, struct headers, big-endian ids and
+the array flags are checked or read exactly. What they accept beyond the encoder's
+output comes only from the VLQ fields (ids, keys, class fields and array counts, see
+`Vlq.UInt32Form`) and from the PValues inside (`PValue.BodyForm`). -/
+
+/-- The bytes the decoder accepts for a value. -/
+def Value.Form : Value → ByteArray → Prop
+  | .scalar value, input => ∃ body, input = bytes #[0x00, value.datatype] ++ body ∧
+      value.BodyForm body
+  | .array datatype elements, input => ∃ countBytes,
+      input = bytes #[0x10, datatype] ++ countBytes ++ elements ∧
+      0 < arrayElementSize datatype ∧ elements.size % arrayElementSize datatype = 0 ∧
+      Vlq.UInt32Form (UInt32.ofNat (elements.size / arrayElementSize datatype)) countBytes ∧
+      elements.size / arrayElementSize datatype < 2 ^ 32
+
+/-- The bytes the decoder accepts for an item. -/
+def Item.Form : Item → ByteArray → Prop
+  | .objectStart relationId classId classFlags attributeId, input =>
+    ∃ classBytes flagsBytes attributeBytes,
+      input = bytes #[0xa1] ++ uint32BE relationId ++ classBytes ++ flagsBytes ++ attributeBytes ∧
+      Vlq.UInt32Form classId classBytes ∧ Vlq.UInt32Form classFlags flagsBytes ∧
+      Vlq.UInt32Form attributeId attributeBytes
+  | .objectEnd, input => input = bytes #[0xa2]
+  | .attribute id value, input => ∃ idBytes valueBytes,
+      input = bytes #[0xa3] ++ idBytes ++ valueBytes ∧ Vlq.UInt32Form id idBytes ∧
+      value.Form valueBytes
+  | .attributeStruct id structId, input => ∃ idBytes,
+      input = bytes #[0xa3] ++ idBytes ++ structHeader structId ∧ Vlq.UInt32Form id idBytes
+  | .relation id target, input => ∃ idBytes,
+      input = bytes #[0xa4] ++ idBytes ++ uint32BE target ∧ Vlq.UInt32Form id idBytes
+  | .member key value, input => ∃ keyBytes valueBytes,
+      input = keyBytes ++ valueBytes ∧ Vlq.UInt32Form key keyBytes ∧ key ≠ 0 ∧
+      value.Form valueBytes
+  | .memberStruct key structId, input => ∃ keyBytes,
+      input = keyBytes ++ structHeader structId ∧ Vlq.UInt32Form key keyBytes ∧ key ≠ 0
+  | .structEnd, input => input = bytes #[0x00]
+
+/-- A sequence of items, each in an accepted form, back to back. -/
+def ItemsForm : List Item → ByteArray → Prop
+  | [], input => input = ByteArray.empty
+  | item :: rest, input => ∃ first others, input = first ++ others ∧ item.Form first ∧
+      ItemsForm rest others
+
+theorem decodeArray_canonical (cursor next : Cursor) (value : Value)
+    (h : decodeArray cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset + 1 ≤ next.offset ∧
+      ∃ datatype elements countBytes, value = .array datatype elements ∧
+        cursor.data.extract cursor.offset next.offset =
+          cursor.data.extract cursor.offset (cursor.offset + 1) ++ bytes #[datatype] ++
+            countBytes ++ elements ∧
+        0 < arrayElementSize datatype ∧ elements.size % arrayElementSize datatype = 0 ∧
+        Vlq.UInt32Form (UInt32.ofNat (elements.size / arrayElementSize datatype)) countBytes ∧
+        elements.size / arrayElementSize datatype < 2 ^ 32 := by
+  simp only [decodeArray, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    split at h
+    · contradiction
+    · rename_i _ r2 h2
+      split at h
+      · simp [throw, throwThe, MonadExceptOf.throw] at h
+      · rename_i hsize
+        split at h
+        · contradiction
+        · rename_i _ r3 h3
+          split at h
+          · contradiction
+          · rename_i _ r4 h4
+            simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl⟩ := h
+            obtain ⟨-, -, hn1⟩ := readUInt8_extract _ _ _ h1
+            rw [hn1] at h2
+            obtain ⟨-, hx2, hn2⟩ := readUInt8_extract _ _ _ h2
+            rw [hn2] at h3
+            obtain ⟨hd3, hle3, hf3⟩ := Vlq.decodeUInt32_form _ _ _ h3
+            have hs4 := readBytes_size _ _ _ _ h4
+            obtain ⟨hp4, hn4⟩ := readBytes_extract _ _ _ _ h4
+            simp only at hx2 hd3 hle3 hf3
+            have hpos : 0 < arrayElementSize r2.fst := Nat.pos_of_ne_zero hsize
+            have hdiv : r4.fst.size / arrayElementSize r2.fst = r3.fst.toNat := by
+              rw [hs4, Nat.mul_div_cancel _ hpos]
+            refine ⟨by rw [hn4]; exact hd3, by rw [hn4]; simp; omega, r2.fst, r4.fst,
+              cursor.data.extract (cursor.offset + 1 + 1) r3.snd.offset, rfl, ?_, hpos,
+              by rw [hs4, Nat.mul_mod_left], by rw [hdiv, UInt32.ofNat_toNat]; exact hf3,
+              by rw [hdiv]; exact r3.fst.toNat_lt⟩
+            rw [hn4, hp4, hd3, hx2]
+            simp only
+            rw [ByteArray.extract_append_extract_of_le _ (by omega) (by omega),
+              ByteArray.extract_append_extract_of_le _ (by omega) hle3,
+              ByteArray.extract_append_extract_of_le _ (by omega) (by omega)]
+
+theorem decodeValue_canonical (cursor next : Cursor) (value : Value)
+    (h : decodeValue cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      value.Form (cursor.data.extract cursor.offset next.offset) := by
+  simp only [decodeValue, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    obtain ⟨-, hx1, -⟩ := readUInt8_extract _ _ _ h1
+    split at h
+    · rename_i hflags
+      obtain ⟨hd, hle, datatype, elements, countBytes, rfl, hext, hpos, hmod, hform, hlt⟩ :=
+        decodeArray_canonical _ _ _ h
+      refine ⟨hd, by omega, countBytes, ?_, hpos, hmod, hform, hlt⟩
+      rw [hext, ← hx1, hflags, bytes_pair]
+    · obtain ⟨⟨v, c⟩, he, hf⟩ := Except.map_eq_ok h
+      simp only [Prod.mk.injEq] at hf
+      obtain ⟨rfl, rfl⟩ := hf
+      exact decodePValue_canonical _ _ _ he
+
+/-- The bytes a slot consumed: a struct header, or a value in an accepted form. -/
+def SlotForm : Sum UInt32 Value → ByteArray → Prop
+  | .inl structId, input => input = structHeader structId
+  | .inr value, input => value.Form input
+
+theorem decodeSlot_canonical (cursor next : Cursor) (slot : Sum UInt32 Value)
+    (h : decodeSlot cursor = .ok (slot, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      SlotForm slot (cursor.data.extract cursor.offset next.offset) := by
+  simp only [decodeSlot, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    split at h
+    · contradiction
+    · rename_i _ r2 h2
+      split at h
+      · rename_i hstruct
+        split at h
+        · contradiction
+        · rename_i _ r3 h3
+          simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          obtain ⟨-, hx1, hn1⟩ := readUInt8_extract _ _ _ h1
+          rw [hn1] at h2
+          obtain ⟨-, hx2, hn2⟩ := readUInt8_extract _ _ _ h2
+          rw [hn2] at h3
+          obtain ⟨-, hx3, hn3⟩ := readUInt32BE_value _ _ _ h3
+          simp only at hx2 hx3 hn3
+          rw [hstruct.1] at hx1
+          rw [hstruct.2] at hx2
+          refine ⟨by rw [hn3], by rw [hn3]; dsimp only; omega, ?_⟩
+          show _ = structHeader _
+          rw [hn3, structHeader, bytes_pair, hx1, hx2, hx3]
+          simp only
+          rw [ByteArray.extract_append_extract_of_le _ (by omega) (by omega),
+            ByteArray.extract_append_extract_of_le _ (by omega) (by omega)]
+      · split at h
+        · contradiction
+        · rename_i _ r3 h3
+          simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact decodeValue_canonical _ _ _ h3
+
+theorem decodeItem_canonical (top : Frame) (cursor next : Cursor) (item : Item)
+    (h : decodeItem top cursor = .ok (item, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      item.Form (cursor.data.extract cursor.offset next.offset) := by
+  cases top with
+  | object =>
+    simp only [decodeItem, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨-, hx1, hn1⟩ := readUInt8_extract _ _ _ h1
+      rcases ite_eq_cases h with ⟨htag, h⟩ | ⟨-, h⟩
+      · -- A1: object start
+        rw [htag] at hx1
+        split at h
+        · contradiction
+        · rename_i _ r2 h2
+          rw [hn1] at h2
+          obtain ⟨-, hx2, hn2⟩ := readUInt32BE_value _ _ _ h2
+          simp only at hx2 hn2
+          split at h
+          · contradiction
+          · rename_i _ r3 h3
+            rw [hn2] at h3
+            obtain ⟨hd3, hle3, hf3⟩ := Vlq.decodeUInt32_form _ _ _ h3
+            simp only at hd3 hle3 hf3
+            split at h
+            · contradiction
+            · rename_i _ r4 h4
+              obtain ⟨hd4, hle4, hf4⟩ := Vlq.decodeUInt32_form _ _ _ h4
+              rw [hd3] at hf4
+              split at h
+              · contradiction
+              · rename_i _ r5 h5
+                obtain ⟨hd5, hle5, hf5⟩ := Vlq.decodeUInt32_form _ _ _ h5
+                rw [hd4, hd3] at hf5
+                simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+                obtain ⟨rfl, rfl⟩ := h
+                refine ⟨by rw [hd5, hd4, hd3], by omega, _, _, _, ?_, hf3, hf4, hf5⟩
+                rw [hx1, hx2,
+                  ByteArray.extract_append_extract_of_le _ (by omega) (by omega),
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle3,
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle4,
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle5]
+      · rcases ite_eq_cases h with ⟨htag, h⟩ | ⟨-, h⟩
+        · -- A2: object end
+          simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          refine ⟨by rw [hn1], by rw [hn1]; dsimp only; omega, ?_⟩
+          show _ = bytes #[0xa2]
+          rw [hn1, ← htag, hx1]
+        · rcases ite_eq_cases h with ⟨htag, h⟩ | ⟨-, h⟩
+          · -- A3: attribute
+            rw [htag] at hx1
+            split at h
+            · contradiction
+            · rename_i _ r2 h2
+              rw [hn1] at h2
+              obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt32_form _ _ _ h2
+              simp only at hd2 hle2 hf2
+              split at h
+              · contradiction
+              · rename_i _ r3 h3
+                obtain ⟨hd3, hle3, hf3⟩ := decodeSlot_canonical _ _ _ h3
+                rw [hd2] at hf3
+                split at h
+                · rename_i structId hslot
+                  simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+                  obtain ⟨rfl, rfl⟩ := h
+                  rw [hslot] at hf3
+                  simp only [SlotForm] at hf3
+                  refine ⟨by rw [hd3, hd2], by omega, _, ?_, hf2⟩
+                  rw [hx1, ← hf3,
+                    ByteArray.extract_append_extract_of_le _ (by omega) hle2,
+                    ByteArray.extract_append_extract_of_le _ (by omega) hle3]
+                · rename_i value hslot
+                  simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+                  obtain ⟨rfl, rfl⟩ := h
+                  rw [hslot] at hf3
+                  simp only [SlotForm] at hf3
+                  refine ⟨by rw [hd3, hd2], by omega, _, _, ?_, hf2, hf3⟩
+                  rw [hx1, ByteArray.extract_append_extract_of_le _ (by omega) hle2,
+                    ByteArray.extract_append_extract_of_le _ (by omega) hle3]
+          · rcases ite_eq_cases h with ⟨htag, h⟩ | ⟨-, h⟩
+            · -- A4: relation
+              rw [htag] at hx1
+              split at h
+              · contradiction
+              · rename_i _ r2 h2
+                rw [hn1] at h2
+                obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt32_form _ _ _ h2
+                simp only at hd2 hle2 hf2
+                split at h
+                · contradiction
+                · rename_i _ r3 h3
+                  obtain ⟨-, hx3, hn3⟩ := readUInt32BE_value _ _ _ h3
+                  rw [hd2] at hx3
+                  simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+                  obtain ⟨rfl, rfl⟩ := h
+                  refine ⟨by rw [hn3]; exact hd2, by rw [hn3]; dsimp only; omega, _, ?_, hf2⟩
+                  rw [hn3, hx1, hx3]
+                  dsimp only
+                  rw [ByteArray.extract_append_extract_of_le _ (by omega) hle2,
+                    ByteArray.extract_append_extract_of_le _ (by omega) (by omega)]
+            · simp [throw, throwThe, MonadExceptOf.throw] at h
+  | struct =>
+    simp only [decodeItem, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨-, hx1, hn1⟩ := readUInt8_extract _ _ _ h1
+      rcases ite_eq_cases h with ⟨hfirst, h⟩ | ⟨hfirst, h⟩
+      · -- the struct terminator
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        refine ⟨by rw [hn1], by rw [hn1]; dsimp only; omega, ?_⟩
+        show _ = bytes #[0x00]
+        rw [hn1, ← hfirst, hx1]
+      · -- a member: the key is read from the first byte on
+        split at h
+        · contradiction
+        · rename_i _ r2 h2
+          obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt32_form _ _ _ h2
+          rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hkey, h⟩
+          · simp [throw, throwThe, MonadExceptOf.throw] at h
+          · split at h
+            · contradiction
+            · rename_i _ r3 h3
+              obtain ⟨hd3, hle3, hf3⟩ := decodeSlot_canonical _ _ _ h3
+              rw [hd2] at hf3
+              split at h
+              · rename_i structId hslot
+                simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+                obtain ⟨rfl, rfl⟩ := h
+                rw [hslot] at hf3
+                simp only [SlotForm] at hf3
+                refine ⟨by rw [hd3, hd2], by omega, _, ?_, hf2, hkey⟩
+                rw [← hf3, ByteArray.extract_append_extract_of_le _ hle2 hle3]
+              · rename_i value hslot
+                simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+                obtain ⟨rfl, rfl⟩ := h
+                rw [hslot] at hf3
+                simp only [SlotForm] at hf3
+                refine ⟨by rw [hd3, hd2], by omega, _, _, ?_, hf2, hkey, hf3⟩
+                rw [ByteArray.extract_append_extract_of_le _ hle2 hle3]
+
+/-- Canonical form of the item sequence: the items close the given stack (each one is
+    allowed where it stands, and the last one closes the outermost frame), and the
+    bytes are their accepted forms back to back. -/
+theorem decodeItems_canonical (fuel : Nat) (stack : List Frame) (cursor next : Cursor)
+    (items : List Item) (h : decodeItems fuel stack cursor = .ok (items, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧ Closes stack items ∧
+      ItemsForm items (cursor.data.extract cursor.offset next.offset) := by
+  induction fuel generalizing stack cursor items next with
+  | zero => simp [decodeItems] at h
+  | succ fuel ih =>
+    simp only [decodeItems, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨hd1, hle1, hf1⟩ := decodeItem_canonical _ _ _ _ h1
+      split at h
+      · simp [throw, throwThe, MonadExceptOf.throw] at h
+      · rename_i hstep
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        refine ⟨hd1, hle1, by simp [Closes, hstep], _, ByteArray.empty, by simp, hf1,
+          by simp [ItemsForm]⟩
+      · rename_i nextStack hne hstep
+        split at h
+        · contradiction
+        · rename_i _ r2 h2
+          simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          obtain ⟨hd2, hle2, hc2, hf2⟩ := ih _ _ _ _ h2
+          rw [hd1] at hf2
+          refine ⟨by rw [hd2, hd1], by omega, ?_, _, _,
+            (ByteArray.extract_append_extract_of_le _ hle1 hle2).symm, hf1, hf2⟩
+          cases nextStack with
+          | nil => exact (hne rfl).elim
+          | cons frame rest => simp [Closes, hstep, hc2]
+
+/-- Canonical form of an object tree: an accepted tree is a well-nested item sequence
+    that closes the outermost object, and its bytes are the items' accepted forms. -/
+theorem decodeTree_canonical (cursor next : Cursor) (items : List Item)
+    (h : decodeTree cursor = .ok (items, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧ Closes [] items ∧
+      ItemsForm items (cursor.data.extract cursor.offset next.offset) :=
+  decodeItems_canonical _ _ _ _ _ h
+
+/-! ### The encoders' bytes are accepted forms -/
+
+theorem Value.form_encode (value : Value) (hfit : value.Fits) : value.Form value.encode := by
+  cases value with
+  | scalar value =>
+    exact ⟨value.encodeBody, by simp [Value.encode, PValue.encode, bytes_pair],
+      PValue.bodyForm_encodeBody value hfit⟩
+  | array datatype elements =>
+    obtain ⟨hsize, hmod, hcount⟩ := hfit
+    exact ⟨Vlq.encodeUInt32 (UInt32.ofNat (elements.size / arrayElementSize datatype)),
+      by simp [Value.encode], hsize, hmod, Vlq.uint32Form_encode _, hcount⟩
+
+theorem Item.form_encode (item : Item) (hfit : item.Fits) : item.Form item.encode := by
+  rcases item with ⟨relationId, classId, classFlags, attributeId⟩ | _ | ⟨id, value⟩ |
+      ⟨id, structId⟩ | ⟨id, target⟩ | ⟨key, value⟩ | ⟨key, structId⟩ | _
+  · exact ⟨_, _, _, rfl, Vlq.uint32Form_encode _, Vlq.uint32Form_encode _,
+      Vlq.uint32Form_encode _⟩
+  · rfl
+  · exact ⟨_, _, rfl, Vlq.uint32Form_encode _, Value.form_encode value hfit⟩
+  · exact ⟨_, rfl, Vlq.uint32Form_encode _⟩
+  · exact ⟨_, rfl, Vlq.uint32Form_encode _⟩
+  · exact ⟨_, _, rfl, Vlq.uint32Form_encode _, hfit.1, Value.form_encode value hfit.2⟩
+  · exact ⟨_, rfl, Vlq.uint32Form_encode _, hfit⟩
+  · rfl
+
+theorem itemsForm_encodeItems (items : List Item) (hfits : ∀ item ∈ items, item.Fits) :
+    ItemsForm items (encodeItems items) := by
+  induction items with
+  | nil => rfl
+  | cons item rest ih =>
+    exact ⟨item.encode, encodeItems rest, rfl, Item.form_encode item (hfits item (by simp)),
+      ih (fun other hother => hfits other (by simp [hother]))⟩
+
 end LeanS7CommPlus
