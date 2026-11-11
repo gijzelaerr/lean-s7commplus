@@ -5,9 +5,31 @@ HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of s
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
 PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
 for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ),
-8b (PValues), 8c (trees) and 8d (session payloads) are done, 8e and 8f are not
-started. Decision 1 is provisional (lean-s7 pinned to a commit). The other
-decisions are open.
+8b (PValues), 8c (trees), 8d (session payloads) and 8e (GetMultiVariables and
+IntegrityIds) are done, 8f is not started. Decision 1 is provisional (lean-s7 pinned
+to a commit). The other decisions are open.
+
+## Phase 8e results (GetMultiVariables and IntegrityIds)
+
+No decoder changed.
+
+- **`decodeItemAddress_canonical`** and **`decodeAddresses_canonical`**
+  (`ItemAddress.Form`, `JoinForm`): five VLQ fields, the third the number of LIDs plus
+  one.
+- **`decodeObjectQualifier_canonical`** (`ObjectQualifierForm`): the fixed prefix
+  exactly, then a big-endian word or a VLQ and a zero byte. `ByteArray`'s `BEq` is not
+  registered as lawful, so `ByteArray.eq_of_bne_false` turns the decoder's `!=` check
+  into an equation.
+- **`decodeReadRequestBody_canonical`** and **`decodeReadRequest_canonical`**: because
+  the request decoder ends with `finish`, the theorem is an equation for the whole
+  payload: `payload = body ++ idBytes ++ uint32BE 0`, with `idBytes` empty exactly when
+  no IntegrityId is expected.
+- **`decodeValueList_canonical`**, **`decodeErrorList_canonical`** and
+  **`decodeReadReply_canonical`** (`TerminatedForm`): entries with nonzero item
+  numbers, ended by item number 0, which may itself be padded (`80 00`).
+- **`decodeLeadingIntegrityId_canonical`** (an equation `payload = idBytes ++ rest`) and
+  **`decodeTrailingIntegrityId_canonical`**, with `decodeUInt32_le_size`: a VLQ read
+  stays within the input.
 
 ## Phase 8d results (session payloads)
 
@@ -981,10 +1003,10 @@ theorem characterises the input instead of re-encoding it).
 | `decodeCreateObjectReply` | no | characterised (8d) | lossy: keeps the first object id and three attributes, ignores the bytes after the tree | done |
 | `decodeLegitimationChallenge` | no | characterised (8d) | lossy: an optional zero marker, a BLOB root that is discarded, a BLOB flags byte that is not checked, and ignored trailing bytes. Rejects a non-zero return value. Fixed in 8d (see below) | done |
 | `decodeVlqList` | yes | yes (8d) | lenient through VLQ | done |
-| `decodeItemAddress`, `decodeAddresses` | yes | no | lenient through VLQ | 8e |
-| `decodeObjectQualifier` | yes | no | strict prefix; the fixed form is strict, and the VLQ form inherits VLQ leniency and needs a zero terminator | 8e |
-| `decodeReadRequest`, `decodeReadRequestBody`, `decodeReadReply`, `decodeValueList`, `decodeErrorList` | yes | no | through the above; the reply lists run to the end of the payload | 8e |
-| `decodeLeadingIntegrityId`, `decodeTrailingIntegrityId` | yes | no | lenient through VLQ; the trailing form requires exactly `tail` zero bytes | 8e |
+| `decodeItemAddress`, `decodeAddresses` | yes | yes (8e) | lenient through VLQ; the LID count must equal the LIDs plus one | done |
+| `decodeObjectQualifier` | yes | yes (8e) | strict prefix; the fixed form is strict, the VLQ form has VLQ freedom and a zero terminator | done |
+| `decodeReadRequest`, `decodeReadRequestBody`, `decodeReadReply`, `decodeValueList`, `decodeErrorList` | yes | yes (8e) | through the above; the list terminators (item 0) may be padded | done |
+| `decodeLeadingIntegrityId`, `decodeTrailingIntegrityId` | yes | yes (8e) | lenient through VLQ; the trailing form requires exactly `tail` zero bytes | done |
 | `decodeWriteRequest`, `decodeWriteRequestBody`, `decodeNumberedValues`, `decodeWriteReply` | yes | no | through the above; the fill must be zero | 8f |
 | `parseFingerprint` | no | characterised (8d) | lossy and not a wire decoder: it parses a string and upper-cases the key id | done |
 | `Client.decodeName` | no | no | lossy display helper for browse results (`Char.ofNat` maps invalid code points). Out of scope | — |

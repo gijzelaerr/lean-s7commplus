@@ -73,6 +73,11 @@ Implemented and proved so far:
   fill, and the reply's value and error lists. `decodeReadRequest_encode` and
   `decodeReadReply_encode`: round trips. The read of the CPU 1214C session and the
   four S7-1500 partial-failure replies decode and re-encode byte for byte.
+  `decodeReadRequest_canonical`: an accepted request payload is exactly an accepted body,
+  the IntegrityId when one is expected, and four zero fill bytes; the body's zero word,
+  field count and qualifier prefix are exact, and only VLQ fields have freedom.
+  `decodeReadReply_canonical`: a return value, then value and error lists, each ended
+  by item number 0 in any VLQ form.
 - **SetMultiVariables and per-item read results** (`LeanS7CommPlus.Write`): the write
   request (addresses, values numbered from 1, qualifier, fill) and reply, with round
   trips `decodeWriteRequest_encode` and `decodeWriteReply_encode`. `ReadReply.results`
@@ -157,6 +162,8 @@ Implemented and proved so far:
   `ReadRequest.encode_insert` and `WriteRequest.encode_insert`: the request encoders
   place the id before the four fill bytes. The response position is a named parameter
   (`ResponseIntegrity`), with round trips for the leading and trailing forms.
+  `decodeLeadingIntegrityId_canonical` and `decodeTrailingIntegrityId_canonical`: the id
+  in any 32-bit VLQ form, then the rest of the payload, or exactly `tail` zero bytes.
 
 Every frame of a real CPU 1214C V4.2.2 session (`fixtures/`) decodes and
 re-encodes byte for byte, and the VLQ encoders match the Python reference on

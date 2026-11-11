@@ -149,6 +149,14 @@ theorem Except.bind_eq_ok {ε α β : Type} {e : Except ε α} {f : α → Excep
   | error _ => simp [bind, Except.bind] at h
   | ok a => exact ⟨a, rfl, h⟩
 
+/-- `ByteArray`'s `BEq` is not registered as lawful; this is the direction the decoders
+    need. -/
+theorem ByteArray.eq_of_bne_false {a b : ByteArray} (h : (a != b) = false) : a = b := by
+  simp only [bne, BEq.beq, ByteArray.beq, Bool.not_eq_false'] at h
+  cases a; cases b
+  congr
+  exact Array.eq_of_isEqv _ _ h
+
 theorem extract_self (data : ByteArray) (position : Nat) :
     data.extract position position = ByteArray.empty := by
   apply ByteArray.ext

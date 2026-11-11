@@ -600,4 +600,422 @@ theorem decodeVlqList_canonical (count : Nat) (cursor next : Cursor) (values : L
         exact ⟨by rw [hd2, hd1], by omega, by simp [hlen], _, _,
           (ByteArray.extract_append_extract_of_le _ hle1 hle2).symm, hf1, hf2⟩
 
+/-- Elements back to back, each in its accepted form. -/
+def JoinForm {α : Type} (form : α → ByteArray → Prop) : List α → ByteArray → Prop
+  | [], input => input = ByteArray.empty
+  | element :: rest, input => ∃ first others, input = first ++ others ∧ form element first ∧
+      JoinForm form rest others
+
+/-- The bytes `decodeItemAddress` accepts: five VLQ fields, the third being the number
+    of LIDs plus one. -/
+def ItemAddress.Form (address : ItemAddress) (input : ByteArray) : Prop :=
+  ∃ crcBytes areaBytes countBytes subAreaBytes lidsBytes,
+    input = crcBytes ++ areaBytes ++ countBytes ++ subAreaBytes ++ lidsBytes ∧
+    Vlq.UInt32Form address.symbolCrc crcBytes ∧ Vlq.UInt32Form address.accessArea areaBytes ∧
+    Vlq.UInt32Form (UInt32.ofNat (address.lids.length + 1)) countBytes ∧
+    address.lids.length + 1 < 2 ^ 32 ∧
+    Vlq.UInt32Form address.accessSubArea subAreaBytes ∧ VlqListForm address.lids lidsBytes
+
+theorem decodeItemAddress_canonical (cursor next : Cursor) (address : ItemAddress)
+    (h : decodeItemAddress cursor = .ok (address, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      address.Form (cursor.data.extract cursor.offset next.offset) := by
+  simp only [decodeItemAddress, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    obtain ⟨hd1, hle1, hf1⟩ := Vlq.decodeUInt32_form _ _ _ h1
+    split at h
+    · contradiction
+    · rename_i _ r2 h2
+      obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt32_form _ _ _ h2
+      split at h
+      · contradiction
+      · rename_i _ r3 h3
+        obtain ⟨hd3, hle3, hf3⟩ := Vlq.decodeUInt32_form _ _ _ h3
+        rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hids, h⟩
+        · simp [throw, throwThe, MonadExceptOf.throw] at h
+        · split at h
+          · contradiction
+          · rename_i _ r4 h4
+            obtain ⟨hd4, hle4, hf4⟩ := Vlq.decodeUInt32_form _ _ _ h4
+            split at h
+            · contradiction
+            · rename_i _ r5 h5
+              obtain ⟨hd5, hle5, hlen5, hf5⟩ := decodeVlqList_canonical _ _ _ _ h5
+              simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+              obtain ⟨rfl, rfl⟩ := h
+              have hpos : 1 ≤ r3.fst.toNat := by
+                have : r3.fst.toNat ≠ 0 := fun hz => hids (UInt32.toNat_inj.mp (by simpa using hz))
+                omega
+              have hcount : UInt32.ofNat (r5.fst.length + 1) = r3.fst := by
+                rw [hlen5, show r3.fst.toNat - 1 + 1 = r3.fst.toNat by omega, UInt32.ofNat_toNat]
+              rw [hd1] at hf2
+              rw [hd2, hd1] at hf3
+              rw [hd3, hd2, hd1] at hf4
+              rw [hd4, hd3, hd2, hd1] at hf5
+              refine ⟨by rw [hd5, hd4, hd3, hd2, hd1], by omega, _, _, _, _, _, ?_, hf1, hf2,
+                by rw [hcount]; exact hf3, by rw [hlen5]; have := r3.fst.toNat_lt; omega,
+                hf4, hf5⟩
+              rw [ByteArray.extract_append_extract_of_le _ hle1 hle2,
+                ByteArray.extract_append_extract_of_le _ (by omega) hle3,
+                ByteArray.extract_append_extract_of_le _ (by omega) hle4,
+                ByteArray.extract_append_extract_of_le _ (by omega) hle5]
+
+theorem decodeAddresses_canonical (count : Nat) (cursor next : Cursor)
+    (addresses : List ItemAddress) (h : decodeAddresses count cursor = .ok (addresses, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧ addresses.length = count ∧
+      JoinForm ItemAddress.Form addresses (cursor.data.extract cursor.offset next.offset) := by
+  induction count generalizing cursor next addresses with
+  | zero =>
+    simp only [decodeAddresses, Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact ⟨rfl, Nat.le_refl _, rfl, extract_self _ _⟩
+  | succ count ih =>
+    simp only [decodeAddresses, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨hd1, hle1, hf1⟩ := decodeItemAddress_canonical _ _ _ h1
+      split at h
+      · contradiction
+      · rename_i _ r2 h2
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        obtain ⟨hd2, hle2, hlen, hf2⟩ := ih _ _ _ h2
+        rw [hd1] at hf2
+        exact ⟨by rw [hd2, hd1], by omega, by simp [hlen], _, _,
+          (ByteArray.extract_append_extract_of_le _ hle1 hle2).symm, hf1, hf2⟩
+
+/-- The bytes `decodeObjectQualifier` accepts: the fixed prefix exactly, then the
+    KeyQualifier as a big-endian word, or as a VLQ in any form and a zero byte. -/
+def ObjectQualifierForm : QualifierForm → UInt32 → ByteArray → Prop
+  | .fixed, keyQualifier, input => input = objectQualifierPrefix ++ uint32BE keyQualifier
+  | .vlq, keyQualifier, input => ∃ keyBytes,
+      input = objectQualifierPrefix ++ keyBytes ++ bytes #[0x00] ∧
+      Vlq.UInt32Form keyQualifier keyBytes
+
+theorem decodeObjectQualifier_canonical (form : QualifierForm) (cursor next : Cursor)
+    (keyQualifier : UInt32) (h : decodeObjectQualifier form cursor = .ok (keyQualifier, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      ObjectQualifierForm form keyQualifier (cursor.data.extract cursor.offset next.offset) := by
+  simp only [decodeObjectQualifier, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    obtain ⟨hp1, hn1⟩ := readBytes_extract _ _ _ _ h1
+    rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hprefix, h⟩
+    · simp [throw, throwThe, MonadExceptOf.throw] at h
+    · have hprefix : r1.fst = objectQualifierPrefix :=
+        ByteArray.eq_of_bne_false (by simpa using hprefix)
+      rw [hprefix] at hp1
+      cases form with
+      | fixed =>
+        simp only at h
+        rw [hn1] at h
+        obtain ⟨-, hx, hn⟩ := readUInt32BE_value _ _ _ h
+        refine ⟨by rw [hn], by rw [hn]; dsimp only; omega, ?_⟩
+        show _ = _ ++ _
+        rw [hn]
+        dsimp only
+        rw [← ByteArray.extract_append_extract_of_le _ (Nat.le_add_right _ objectQualifierPrefix.size)
+          (Nat.le_add_right _ 4), ← hp1, ← hx]
+      | vlq =>
+        simp only at h
+        split at h
+        · contradiction
+        · rename_i _ r2 h2
+          rw [hn1] at h2
+          obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt32_form _ _ _ h2
+          simp only at hd2 hle2 hf2
+          split at h
+          · contradiction
+          · rename_i _ r3 h3
+            obtain ⟨-, hx3, hn3⟩ := readUInt8_extract _ _ _ h3
+            rw [hd2] at hx3
+            rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hterm, h⟩
+            · simp [throw, throwThe, MonadExceptOf.throw] at h
+            · have hterm : r3.fst = 0x00 := by simpa using hterm
+              rw [hterm] at hx3
+              simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+              obtain ⟨rfl, rfl⟩ := h
+              refine ⟨by rw [hn3, hd2], by rw [hn3]; dsimp only; omega, _, ?_, hf2⟩
+              rw [hn3]
+              dsimp only
+              have hsplit : cursor.data.extract cursor.offset (r2.snd.offset + 1) =
+                  cursor.data.extract cursor.offset (cursor.offset + objectQualifierPrefix.size) ++
+                    cursor.data.extract (cursor.offset + objectQualifierPrefix.size) r2.snd.offset ++
+                    cursor.data.extract r2.snd.offset (r2.snd.offset + 1) := by
+                rw [ByteArray.extract_append_extract_of_le _ (by omega) hle2,
+                  ByteArray.extract_append_extract_of_le _ (by omega) (by omega)]
+              rw [hsplit, ← hp1, ← hx3]
+
+/-- The bytes `decodeReadRequestBody` accepts for a request. -/
+def ReadRequest.BodyForm (request : ReadRequest) (input : ByteArray) : Prop :=
+  ∃ countBytes fieldsBytes addressBytes qualifierBytes,
+    input = uint32BE 0 ++ countBytes ++ fieldsBytes ++ addressBytes ++ qualifierBytes ∧
+    Vlq.UInt32Form (UInt32.ofNat request.addresses.length) countBytes ∧
+    request.addresses.length < 2 ^ 32 ∧
+    Vlq.UInt32Form (UInt32.ofNat request.fieldCount) fieldsBytes ∧ request.fieldCount < 2 ^ 32 ∧
+    JoinForm ItemAddress.Form request.addresses addressBytes ∧
+    ObjectQualifierForm request.form request.keyQualifier qualifierBytes
+
+theorem decodeReadRequestBody_canonical (form : QualifierForm) (cursor next : Cursor)
+    (request : ReadRequest) (h : decodeReadRequestBody form cursor = .ok (request, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧ request.form = form ∧
+      request.BodyForm (cursor.data.extract cursor.offset next.offset) := by
+  simp only [decodeReadRequestBody, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    obtain ⟨-, hx1, hn1⟩ := readUInt32BE_value _ _ _ h1
+    rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hzero, h⟩
+    · simp [throw, throwThe, MonadExceptOf.throw] at h
+    · have hzero : r1.fst = 0 := by simpa using hzero
+      rw [hzero] at hx1
+      split at h
+      · contradiction
+      · rename_i _ r2 h2
+        rw [hn1] at h2
+        obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt32_form _ _ _ h2
+        simp only at hd2 hle2 hf2
+        split at h
+        · contradiction
+        · rename_i _ r3 h3
+          obtain ⟨hd3, hle3, hf3⟩ := Vlq.decodeUInt32_form _ _ _ h3
+          rw [hd2] at hf3
+          split at h
+          · contradiction
+          · rename_i _ r4 h4
+            obtain ⟨hd4, hle4, hlen4, hf4⟩ := decodeAddresses_canonical _ _ _ _ h4
+            rw [hd3, hd2] at hf4
+            rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hfields, h⟩
+            · simp [throw, throwThe, MonadExceptOf.throw] at h
+            · have hfields : r3.fst.toNat = ReadRequest.fieldCount
+                  { addresses := r4.fst, form := form, keyQualifier := 0 } := by
+                simpa using hfields
+              split at h
+              · contradiction
+              · rename_i _ r5 h5
+                obtain ⟨hd5, hle5, hf5⟩ := decodeObjectQualifier_canonical _ _ _ _ h5
+                rw [hd4, hd3, hd2] at hf5
+                simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+                obtain ⟨rfl, rfl⟩ := h
+                have hcount : UInt32.ofNat r4.fst.length = r2.fst := by
+                  rw [hlen4, UInt32.ofNat_toNat]
+                have hfc : ReadRequest.fieldCount
+                    { addresses := r4.fst, form := form, keyQualifier := r5.fst } = r3.fst.toNat := by
+                  rw [hfields]; rfl
+                refine ⟨by rw [hd5, hd4, hd3, hd2], by omega, rfl, _, _, _, _, ?_,
+                  by simp only; rw [hcount]; exact hf2,
+                  by simp only; rw [hlen4]; exact r2.fst.toNat_lt,
+                  by rw [hfc, UInt32.ofNat_toNat]; exact hf3,
+                  by rw [hfc]; exact r3.fst.toNat_lt, hf4, hf5⟩
+                rw [hx1, ByteArray.extract_append_extract_of_le _ (by omega) hle2,
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle3,
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle4,
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle5]
+
+/-- Canonical form of a GetMultiVariables request payload: the whole payload is an
+    accepted body, the IntegrityId in any 32-bit form when one is expected, and four
+    zero fill bytes. -/
+theorem decodeReadRequest_canonical (form : QualifierForm) (withIntegrity : Bool)
+    (payload : ByteArray) (request : ReadRequest) (integrityId : Option UInt32)
+    (h : decodeReadRequest form withIntegrity payload = .ok (request, integrityId)) :
+    request.form = form ∧ ∃ body idBytes, payload = body ++ idBytes ++ uint32BE 0 ∧
+      request.BodyForm body ∧
+      (match integrityId with
+       | none => withIntegrity = false ∧ idBytes = ByteArray.empty
+       | some id => withIntegrity = true ∧ Vlq.UInt32Form id idBytes) := by
+  -- the fill and the end of the payload, after the body and the IntegrityId
+  have tail : ∀ (cursor : Cursor) (fill : UInt32) (afterFill : Cursor),
+      cursor.data = payload → cursor.readUInt32BE = .ok (fill, afterFill) → fill = 0 →
+      afterFill.finish = .ok () →
+      payload.extract cursor.offset payload.size = uint32BE 0 := by
+    intro cursor fill afterFill hdata hread hfill hfinish
+    obtain ⟨-, hx, hn⟩ := readUInt32BE_value _ _ _ hread
+    have hend := Cursor.finish_ok _ hfinish
+    rw [hn] at hend
+    simp only at hend
+    rw [hdata] at hx hend
+    rw [← hend, ← hx, hfill]
+  cases withIntegrity with
+  | false =>
+    simp only [decodeReadRequest, bind, Except.bind, Bool.false_eq_true, if_false, pure,
+      Except.pure] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨hd1, hle1, hform, hf1⟩ := decodeReadRequestBody_canonical _ _ _ _ h1
+      simp only at hd1 hle1 hf1
+      split at h
+      · contradiction
+      · rename_i _ r3 h3
+        rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hfill, h⟩
+        · simp [throw, throwThe, MonadExceptOf.throw] at h
+        · have hfill : r3.fst = 0 := by simpa using hfill
+          split at h
+          · contradiction
+          · rename_i _ r4 h4
+            simp only [Except.ok.injEq, Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl⟩ := h
+            have htail := tail _ _ _ hd1 h3 hfill h4
+            have hsz := congrArg ByteArray.size htail
+            simp only [ByteArray.size_extract, uint32BE_size, Nat.min_self] at hsz
+            refine ⟨hform, _, ByteArray.empty, ?_, hf1, rfl, rfl⟩
+            rw [ByteArray.append_empty, ← htail,
+              ByteArray.extract_append_extract_of_le _ (Nat.zero_le _) (by omega)]
+            exact ByteArray.extract_zero_size.symm
+  | true =>
+    simp only [decodeReadRequest, bind, Except.bind, if_true, pure, Except.pure] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨hd1, hle1, hform, hf1⟩ := decodeReadRequestBody_canonical _ _ _ _ h1
+      simp only at hd1 hle1 hf1
+      split at h
+      · contradiction
+      · rename_i _ r2 h2
+        obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt32_form _ _ _ h2
+        rw [hd1] at hd2 hf2
+        split at h
+        · contradiction
+        · rename_i _ r3 h3
+          rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hfill, h⟩
+          · simp [throw, throwThe, MonadExceptOf.throw] at h
+          · have hfill : r3.fst = 0 := by simpa using hfill
+            split at h
+            · contradiction
+            · rename_i _ r4 h4
+              simp only [Except.ok.injEq, Prod.mk.injEq] at h
+              obtain ⟨rfl, rfl⟩ := h
+              have htail := tail _ _ _ hd2 h3 hfill h4
+              have hsz := congrArg ByteArray.size htail
+              simp only [ByteArray.size_extract, uint32BE_size, Nat.min_self] at hsz
+              refine ⟨hform, _, _, ?_, hf1, rfl, hf2⟩
+              rw [← htail, ByteArray.extract_append_extract_of_le _ (Nat.zero_le _) hle2,
+                ByteArray.extract_append_extract_of_le _ (Nat.zero_le _) (by omega)]
+              exact ByteArray.extract_zero_size.symm
+
+/-- A value-list entry: a nonzero item number in any 32-bit form and a value. -/
+def ValueEntryForm (entry : UInt32 × Value) (input : ByteArray) : Prop :=
+  ∃ itemBytes valueBytes, input = itemBytes ++ valueBytes ∧ Vlq.UInt32Form entry.1 itemBytes ∧
+    entry.1 ≠ 0 ∧ entry.2.Form valueBytes
+
+/-- An error-list entry: a nonzero item number and a 64-bit error, each in any form. -/
+def ErrorEntryForm (entry : UInt32 × UInt64) (input : ByteArray) : Prop :=
+  ∃ itemBytes errorBytes, input = itemBytes ++ errorBytes ∧ Vlq.UInt32Form entry.1 itemBytes ∧
+    entry.1 ≠ 0 ∧ Vlq.UInt64Form entry.2 errorBytes
+
+/-- A list ended by item number 0, which may itself take any 32-bit form (`80 00`). -/
+def TerminatedForm {α : Type} (form : α → ByteArray → Prop) (entries : List α)
+    (input : ByteArray) : Prop :=
+  ∃ body terminator, input = body ++ terminator ∧ JoinForm form entries body ∧
+    Vlq.UInt32Form 0 terminator
+
+theorem decodeValueList_canonical (fuel : Nat) (cursor next : Cursor)
+    (values : List (UInt32 × Value)) (h : decodeValueList fuel cursor = .ok (values, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      TerminatedForm ValueEntryForm values (cursor.data.extract cursor.offset next.offset) := by
+  induction fuel generalizing cursor next values with
+  | zero => simp [decodeValueList] at h
+  | succ fuel ih =>
+    simp only [decodeValueList, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨hd1, hle1, hf1⟩ := Vlq.decodeUInt32_form _ _ _ h1
+      rcases ite_eq_cases h with ⟨hzero, h⟩ | ⟨hitem, h⟩
+      · simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        rw [hzero] at hf1
+        exact ⟨hd1, hle1, ByteArray.empty, _, by simp, rfl, hf1⟩
+      · split at h
+        · contradiction
+        · rename_i _ r2 h2
+          obtain ⟨hd2, hle2, hf2⟩ := decodeValue_canonical _ _ _ h2
+          split at h
+          · contradiction
+          · rename_i _ r3 h3
+            simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl⟩ := h
+            obtain ⟨hd3, hle3, body, terminator, hsplit, hbody, hterm⟩ := ih _ _ _ h3
+            rw [hd1] at hf2
+            rw [hd2, hd1] at hsplit
+            refine ⟨by rw [hd3, hd2, hd1], by omega,
+              cursor.data.extract cursor.offset r2.snd.offset ++ body, terminator, ?_,
+              ⟨_, body, rfl, ⟨_, _, (ByteArray.extract_append_extract_of_le _ hle1 hle2).symm,
+                hf1, hitem, hf2⟩, hbody⟩, hterm⟩
+            rw [ByteArray.append_assoc, ← hsplit,
+              ByteArray.extract_append_extract_of_le _ (by omega) hle3]
+
+theorem decodeErrorList_canonical (fuel : Nat) (cursor next : Cursor)
+    (errors : List (UInt32 × UInt64)) (h : decodeErrorList fuel cursor = .ok (errors, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      TerminatedForm ErrorEntryForm errors (cursor.data.extract cursor.offset next.offset) := by
+  induction fuel generalizing cursor next errors with
+  | zero => simp [decodeErrorList] at h
+  | succ fuel ih =>
+    simp only [decodeErrorList, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨hd1, hle1, hf1⟩ := Vlq.decodeUInt32_form _ _ _ h1
+      rcases ite_eq_cases h with ⟨hzero, h⟩ | ⟨hitem, h⟩
+      · simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        rw [hzero] at hf1
+        exact ⟨hd1, hle1, ByteArray.empty, _, by simp, rfl, hf1⟩
+      · split at h
+        · contradiction
+        · rename_i _ r2 h2
+          obtain ⟨hd2, hle2, hf2⟩ := Vlq.decodeUInt64_form _ _ _ h2
+          split at h
+          · contradiction
+          · rename_i _ r3 h3
+            simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl⟩ := h
+            obtain ⟨hd3, hle3, body, terminator, hsplit, hbody, hterm⟩ := ih _ _ _ h3
+            rw [hd1] at hf2
+            rw [hd2, hd1] at hsplit
+            refine ⟨by rw [hd3, hd2, hd1], by omega,
+              cursor.data.extract cursor.offset r2.snd.offset ++ body, terminator, ?_,
+              ⟨_, body, rfl, ⟨_, _, (ByteArray.extract_append_extract_of_le _ hle1 hle2).symm,
+                hf1, hitem, hf2⟩, hbody⟩, hterm⟩
+            rw [ByteArray.append_assoc, ← hsplit,
+              ByteArray.extract_append_extract_of_le _ (by omega) hle3]
+
+/-- The bytes `decodeReadReply` accepts: a return value, a value list and an error
+    list, each in an accepted form. -/
+def ReadReply.Form (reply : ReadReply) (input : ByteArray) : Prop :=
+  ∃ returnBytes valueBytes errorBytes, input = returnBytes ++ valueBytes ++ errorBytes ∧
+    Vlq.UInt64Form reply.returnValue returnBytes ∧
+    TerminatedForm ValueEntryForm reply.values valueBytes ∧
+    TerminatedForm ErrorEntryForm reply.errors errorBytes
+
+theorem decodeReadReply_canonical (cursor next : Cursor) (reply : ReadReply)
+    (h : decodeReadReply cursor = .ok (reply, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      reply.Form (cursor.data.extract cursor.offset next.offset) := by
+  simp only [decodeReadReply, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    obtain ⟨hd1, hle1, hf1⟩ := Vlq.decodeUInt64_form _ _ _ h1
+    split at h
+    · contradiction
+    · rename_i _ r2 h2
+      obtain ⟨hd2, hle2, hf2⟩ := decodeValueList_canonical _ _ _ _ h2
+      split at h
+      · contradiction
+      · rename_i _ r3 h3
+        obtain ⟨hd3, hle3, hf3⟩ := decodeErrorList_canonical _ _ _ _ h3
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        rw [hd1] at hf2
+        rw [hd2, hd1] at hf3
+        refine ⟨by rw [hd3, hd2, hd1], by omega, _, _, _, ?_, hf1, hf2, hf3⟩
+        rw [ByteArray.extract_append_extract_of_le _ hle1 hle2,
+          ByteArray.extract_append_extract_of_le _ (by omega) hle3]
+
 end LeanS7CommPlus
