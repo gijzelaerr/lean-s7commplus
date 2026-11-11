@@ -123,6 +123,11 @@ Implemented and proved so far:
   session with the password `secret`, the Lean setup (with a Lean-built blob),
   challenge read and answer frames equal Python's byte for byte. `--password PW`
   legitimates a session.
+- **The client's reply parsing** (phase 9a). The client's IO code now reads controller
+  bytes only through named pure functions: `splitResponse_canonical` (a response is its
+  header and exactly the payload returned), `decodeReturnValue_canonical`,
+  `decodeTrees_canonical` (consecutive EXPLORE trees, each well nested),
+  `setVariableAccepted_spec` and `legitimationRefused_iff`.
 - **Session payloads, characterised** (phase 8d). `decodeSecurityKey_canonical`: an
   accepted SecurityKey is struct 1800's header and exactly the members
   `SecurityKey.items` writes, each in an accepted form. The CreateObject reply and the

@@ -477,4 +477,68 @@ theorem decodeCreateObjectReply_canonical (payload : ByteArray) (reply : CreateO
               · simp [throw, throwThe, MonadExceptOf.throw] at h
             · simp [throw, throwThe, MonadExceptOf.throw] at h
 
+/-! ## Return values and EXPLORE trees
+
+Pure decoders for what the client reads inline (phase 9a). -/
+
+/-- The leading return value of a reply payload. -/
+def decodeReturnValue (payload : ByteArray) : Except DecodeError UInt64 :=
+  (Vlq.decodeUInt64 { data := payload }).map Prod.fst
+
+/-- An accepted return value is a 64-bit VLQ in any accepted form at the start of the
+    payload; the rest of the payload is not read. -/
+theorem decodeReturnValue_canonical (payload : ByteArray) (value : UInt64)
+    (h : decodeReturnValue payload = .ok value) :
+    ∃ consumed, Vlq.UInt64Form value (payload.extract 0 consumed) := by
+  obtain ⟨⟨decoded, cursor⟩, he, hf⟩ := Except.map_eq_ok h
+  simp only at hf
+  subst hf
+  obtain ⟨-, -, hform⟩ := Vlq.decodeUInt64_form _ _ _ he
+  exact ⟨cursor.offset, hform⟩
+
+/-- Consecutive object trees, each starting with `A1`, until the next byte is not `A1`.
+    `fuel` bounds their number. s7commplus 0.3.0 sends the data blocks of an EXPLORE
+    reply as consecutive top-level objects. -/
+def decodeTrees : Nat → Cursor → Except DecodeError (List Item)
+  | 0, _ => .ok []
+  | fuel + 1, cursor =>
+    match cursor.readUInt8 with
+    | .ok (0xa1, _) => do
+      let (items, cursor) ← decodeTree cursor
+      pure (items ++ (← decodeTrees fuel cursor))
+    | _ => .ok []
+
+/-- `decodeTrees` returns the items of consecutive well-nested trees, each in an
+    accepted form, back to back from the cursor. It does not read what follows them. -/
+theorem decodeTrees_canonical (fuel : Nat) (cursor : Cursor) (items : List Item)
+    (h : decodeTrees fuel cursor = .ok items) :
+    ∃ trees stop, items = trees.flatten ∧ cursor.offset ≤ stop ∧
+      JoinForm (fun tree input => Closes [] tree ∧ ItemsForm tree input) trees
+        (cursor.data.extract cursor.offset stop) := by
+  induction fuel generalizing cursor items with
+  | zero =>
+    simp only [decodeTrees, Except.ok.injEq] at h
+    subst h
+    exact ⟨[], cursor.offset, rfl, Nat.le_refl _, extract_self _ _⟩
+  | succ fuel ih =>
+    unfold decodeTrees at h
+    split at h
+    · simp only [bind, Except.bind] at h
+      split at h
+      · contradiction
+      · rename_i _ r1 h1
+        obtain ⟨hd1, hle1, hc1, hf1⟩ := decodeTree_canonical _ _ _ h1
+        split at h
+        · contradiction
+        · rename_i _ r2 h2
+          simp only [pure, Except.pure, Except.ok.injEq] at h
+          subst h
+          obtain ⟨trees, stop, hflat, hstop, hform⟩ := ih _ _ h2
+          rw [hd1] at hform
+          exact ⟨r1.fst :: trees, stop, by simp [hflat], by omega, _, _,
+            (ByteArray.extract_append_extract_of_le _ hle1 hstop).symm, ⟨hc1, hf1⟩, hform⟩
+    · simp only [Except.ok.injEq] at h
+      subst h
+      exact ⟨[], cursor.offset, rfl, Nat.le_refl _, extract_self _ _⟩
+
 end LeanS7CommPlus
