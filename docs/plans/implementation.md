@@ -5,8 +5,9 @@ HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of s
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
 PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
 for the decoders that predate that rule, is done (8a–8f, 2026-11-11): every
-decoder has a canonical-form, proved-leniency or lossy characterisation theorem, or an
-explicit out-of-scope line. Decision 1 is provisional (lean-s7 pinned to a commit).
+decoder in its classification table has a canonical-form, proved-leniency or lossy
+characterisation theorem, or an explicit out-of-scope line. Phase 9, the controller
+bytes the client still parses inline, is planned (2026-11-11). Decision 1 is provisional (lean-s7 pinned to a commit).
 The other decisions are open.
 
 ## Phase 8f results (SetMultiVariables)
@@ -380,8 +381,11 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
 
-**Phase 8 is done.** Every decoder now has a canonical-form, proved-leniency or lossy
-characterisation theorem (see the phase 8 results).
+**Phase 8 is done** for the named decoders in its table (see the phase 8 results).
+
+**Planned (phase 9):** the controller bytes the client still parses inline, outside a
+named decoder (see "Phase 9" below). 9a needs no hardware and changes no behaviour; 9b
+waits for an owner decision.
 
 **lean-s7 pin:** `lakefile.toml` pins lean-s7 `main` at `69dbcb8` until lean-s7 0.3.0
 is tagged. lean-s7 is still at 0.2.0; moving the pin waits for that release.
@@ -1105,6 +1109,84 @@ input that precedes any data request.
   a first release (open decision 5). Phase 8 is recommended first: it is the only one
   that strengthens what the project claims to prove, and it needs neither hardware nor
   new cryptography.
+
+## Phase 9: the client's inline parses and the response IntegrityId (plan, 2026-11-11)
+
+Phase 8 covered the named `decode*` functions. The client still reads controller bytes
+in code outside them, and some of that code drops bytes or skips a check:
+
+| Where | What it reads | What it ignores |
+| --- | --- | --- |
+| `Client.exchange` | `decodeResponseHeader`, then `message.extract 10 message.size` | nothing; but the split is not a named function |
+| `Client.checkSetupReply` | the SetupSession return value | the rest of the reply |
+| `legitimationRefused` | the first value, as a signed return value | the rest |
+| `setVariableAccepted` | the header function, a leading IntegrityId, the return value's low 16 bits | the id's value and the rest |
+| `Client.listDataBlocks` (`trees`) | the EXPLORE return value, then trees while the next byte is `A1` | whatever follows the last tree |
+| `Client.readDb` | `decodeReadReply` of the payload | the bytes after the error list, in keyed sessions the trailing IntegrityId |
+| `Client.writeDb` | a leading IntegrityId (keyed), then `decodeWriteReply` | the id's value, the bytes after the error list |
+
+### The response IntegrityId is a peer fact the client gets wrong for an S7-1200
+
+`ResponseIntegrity` names the three positions, but the client uses none of them: keyed
+reads pass the whole payload to `decodeReadReply`, and keyed writes strip a leading
+VLQ. The evidence:
+
+- **The emulator** (s7commplus 0.3.0 `SessionKeyServer`, key family 01), probed
+  2026-11-11 with the Python client: the SetMultiVariables reply payload is
+  `02 00 00 00` (IntegrityId `02` first), and the GetMultiVariables reply is
+  `00 01 0014 00 02 aabb 00 00 02` (return value, one value, both terminators, then a
+  trailing IntegrityId `02` and no fill).
+- **A CPU 1214C FW V4.2** (key family 01): the GetMultiVariables reply carries the id
+  after the body and before four fill bytes (the `fixtures/` capture, s7commplus#136).
+  The SetMultiVariables reply starts with the return value, and the id follows the
+  body. That comes from s7commplus `_integrity_id_follows_body`, which pmpn8ez's
+  hardware runs for s7commplus#136 exercised (58 tests passed on 2026-11-09).
+- **s7commplus** never checks a response IntegrityId's value. For every V1
+  SessionKey session it keeps GetMultiVariables and EXPLORE replies whole. It also
+  keeps them whole for every PLCSIM reply and for S7-1200 CreateObject and
+  SetMultiVariables replies. Otherwise it strips a leading VLQ. Its write check only
+  looks for a negative first value, so it accepts both the emulator's and the
+  1214C's layout.
+
+So the emulator and a real 1214C, with the same key family, put the write reply's
+IntegrityId in different places. The Lean client's leading strip works against the
+emulator and would misread a real 1214C's write reply. The client cannot tell the two
+apart from the session. This is the case `CLAUDE.md` describes, controller behaviour
+as a named parameter with evidence, and the parameter has to be chosen per peer.
+
+### Sub-phases
+
+- **9a. Pure decoders for the inline parses, no behaviour change.** Factor each row of
+  the table into a total, named function that the IO code calls, and prove what it
+  accepts:
+  - `splitResponse`, the response header and the payload;
+  - `decodeReturnValue` for `checkSetupReply` and `legitimationRefused`;
+  - `setVariableAccepted`;
+  - `decodeExploreReply`: the return value, then trees while the next byte is `A1`.
+
+  The theorems are built from the phase 8 lemmas. Lossy ones say what is ignored.
+  `Client.lean`'s IO code is not proved; the functions it calls are.
+- **9b. Response IntegrityId profiles (waits for the owner).** Replace the hard-coded
+  read and write handling with a named `ResponseIntegrity` per function, chosen by a
+  peer profile:
+  - the emulator: reads trailing with no fill, writes leading;
+  - an S7-1200 FW V4.2: reads trailing with four fill bytes, writes after the body;
+  - an S7-1500 FW 2.9 and PLCSIM, from s7commplus's rules.
+
+  The decoders would check the id's shape (`decodeTrailingIntegrityId`), not its value,
+  as s7commplus does. That changes what the client accepts, so it is its own commit
+  with fixture tests and the emulator run.
+
+### Decisions for the owner
+
+- **How the client picks the peer profile (9b).** A command-line option, a default per
+  key family with an emulator override, or s7commplus's approach of tolerating both
+  layouts with a weaker write check. *Recommended: a default per key family that
+  follows s7commplus's hardware rules, and an explicit emulator profile for
+  `integration/run.py`.* Until then the client is correct for the emulator only.
+- **Checking the id's value.** In a keyed session, the HMAC and the sequence number
+  already bind a reply to its request, so checking the value adds little. No capture
+  shows how the value relates to the request's. *Recommended: check the shape only.*
 
 ## Evidence and hardware boundaries
 
