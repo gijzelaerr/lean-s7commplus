@@ -12,6 +12,9 @@ With `--sessionkey` first, the client opens a V1 SessionKey session. With
 so that the session key matches the one the emulator is configured with; everything
 else in the blob is drawn at random. `--password PW` after either legitimates the
 session with that password, and `--renew` renews the session key once after connecting.
+`--emulator` says the peer is the s7commplus emulator: its keyed replies carry their
+IntegrityIds where `responseIntegrity .emulator` says, not where a controller of the same
+key family puts them.
 -/
 
 open LeanS7 LeanS7CommPlus
@@ -37,9 +40,13 @@ def toHex (data : ByteArray) : String :=
     String.ofList (if digits.length == 1 then '0' :: digits else digits))
 
 def usage : String :=
-  "usage: lean-s7commplus-cli [--sessionkey | --test-key2 HEX] [--password PW] [--renew] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
+  "usage: lean-s7commplus-cli [--emulator] [--sessionkey | --test-key2 HEX] [--password PW] [--renew] HOST PORT (read DB START SIZE | write DB START HEX | browse)"
 
 def run (args : List String) : IO UInt32 := do
+  -- `--emulator`: the peer is the s7commplus emulator, which places keyed write replies'
+  -- IntegrityIds differently from a real controller (see `responseIntegrity`).
+  let emulator := args.contains "--emulator"
+  let args := args.filter (· != "--emulator")
   let (mode, args) : Option (Option ByteArray) × List String := match args with
     | "--sessionkey" :: rest => (some none, rest)
     | "--test-key2" :: hex :: rest => (some (parseHex hex), rest)
@@ -56,6 +63,7 @@ def run (args : List String) : IO UInt32 := do
     let client ← match mode with
       | some testKey2 => Client.connectSessionKey host (UInt16.ofNat port) testKey2 password
       | none => Client.connect host (UInt16.ofNat port)
+    let client := if emulator then { client with peer := .emulator } else client
     let client ← if renew then client.renewSessionKey (mode.bind id) else pure client
     match command with
     | ["read", db, start, size] =>

@@ -66,6 +66,48 @@ def Keyed.skipAfterLegitimation (keyed : Keyed) (family : KeyFamily) : Keyed :=
 def Keyed.openReply (keyed : Keyed) (reply : ByteArray) : Except OpenError ByteArray :=
   openFragments (.stateResume keyed.sessionKey) reply
 
+/-! ## Where a keyed reply carries its IntegrityId
+
+A peer fact the session cannot detect: the emulator and a CPU 1214C share key family 01
+but place the SetMultiVariables reply's IntegrityId differently. -/
+
+/-- The kind of peer, for the facts the session cannot detect. -/
+inductive PeerProfile where
+  /-- A real controller (or PLCSIM), following s7commplus's hardware rules. -/
+  | controller
+  /-- The s7commplus 0.3.0 emulator (`SessionKeyServer`), as `integration/run.py` runs it. -/
+  | emulator
+  deriving Repr, BEq, DecidableEq
+
+/-- Where a keyed reply carries its IntegrityId, per peer, key family and function.
+
+    - **Controllers** follow s7commplus's V1 SessionKey profile, which its hardware runs
+      validated (s7commplus#136: `_strip_response_integrity_id`,
+      `_integrity_id_follows_body`). GetMultiVariables and EXPLORE replies carry the id
+      after the body: on a CPU 1214C FW V4.2 before four fill bytes (`fixtures/`),
+      elsewhere in an unchecked layout. So do every PLCSIM reply and an S7-1200's
+      CreateObject and SetMultiVariables replies. Every other reply leads with it.
+    - **The emulator**, probed with the Python client on 2026-11-11: a GetMultiVariables
+      reply carries the id after the body with no fill (`… 00 00 02`), a
+      SetMultiVariables reply leads with it (`02 00 00 00`), and an EXPLORE reply
+      starts with its return value. -/
+def responseIntegrity (peer : PeerProfile) (family : KeyFamily) (function : UInt16) :
+    ResponseIntegrity :=
+  match peer with
+  | .emulator =>
+    if function = FunctionCode.getMultiVariables then .trailing 0
+    else if function = FunctionCode.explore then .afterBody
+    else .leading
+  | .controller =>
+    if function = FunctionCode.getMultiVariables then
+      if family = .s71200 then .trailing 4 else .afterBody
+    else if function = FunctionCode.explore then .afterBody
+    else if family = .plcsim then .afterBody
+    else if family = .s71200 ∧
+        (function = FunctionCode.createObject ∨ function = FunctionCode.setMultiVariables) then
+      .afterBody
+    else .leading
+
 /-! ## Key renewal
 
 A SessionKey expires, so the client renews it: it reads a fresh challenge, builds a new

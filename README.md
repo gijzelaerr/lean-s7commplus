@@ -128,6 +128,11 @@ Implemented and proved so far:
   header and exactly the payload returned), `decodeReturnValue_canonical`,
   `decodeTrees_canonical` (consecutive EXPLORE trees, each well nested),
   `setVariableAccepted_spec` and `legitimationRefused_iff`.
+- **Response IntegrityId profiles** (phase 9b). Where a keyed reply carries its
+  IntegrityId is a peer fact: the emulator and a CPU 1214C share key family 01 but
+  place it differently. `responseIntegrity` gives the position per peer, key family and
+  function (`--emulator` selects the emulator's), and `decodeWithIntegrity_spec` says
+  what the reply decoder then accepts.
 - **Session payloads, characterised** (phase 8d). `decodeSecurityKey_canonical`: an
   accepted SecurityKey is struct 1800's header and exactly the members
   `SecurityKey.items` writes, each in an accepted form. The CreateObject reply and the

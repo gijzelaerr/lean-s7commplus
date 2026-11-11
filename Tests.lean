@@ -1030,6 +1030,44 @@ def testChallengeMarker : IO Unit := do
   check (decode "00" == none) "no value"
   check (decode "0000" == none) "a marker and no value"
 
+/-- Where keyed replies carry their IntegrityId, per peer (`responseIntegrity`), and
+    `decodeWithIntegrity` on the emulator's probed replies and a CPU 1214C's layout. -/
+def testResponseIntegrity : IO Unit := do
+  -- the table
+  check (responseIntegrity .controller .s71200 FunctionCode.setMultiVariables == .afterBody)
+    "an S7-1200's write reply carries its IntegrityId after the body"
+  check (responseIntegrity .emulator .s71200 FunctionCode.setMultiVariables == .leading)
+    "the emulator's write reply leads with its IntegrityId"
+  check (responseIntegrity .controller .s71200 FunctionCode.getMultiVariables == .trailing 4)
+    "a CPU 1214C's read reply: IntegrityId, then four fill bytes"
+  check (responseIntegrity .emulator .s71200 FunctionCode.getMultiVariables == .trailing 0)
+    "the emulator's read reply: IntegrityId, no fill"
+  check (responseIntegrity .controller .s71500 FunctionCode.setMultiVariables == .leading)
+    "an S7-1500's write reply leads with its IntegrityId"
+  check (responseIntegrity .controller .plcsim FunctionCode.setMultiVariables == .afterBody)
+    "PLCSIM's replies carry their IntegrityId after the body"
+  let readBody := "000100140002aabb0000"
+  let readOk (integrity : ResponseIntegrity) (hex : String) : Bool :=
+    match decodeWithIntegrity integrity decodeReadReply (hexBytes hex) with
+    | .ok reply => reply.values.length == 1 && reply.errors.isEmpty
+    | .error _ => false
+  -- the emulator's read reply, probed 2026-11-11
+  check (readOk (.trailing 0) (readBody ++ "02")) "the emulator's read reply"
+  check (!readOk (.trailing 4) (readBody ++ "02")) "the emulator's read reply has no fill"
+  -- a CPU 1214C's read reply: the id and four fill bytes
+  check (readOk (.trailing 4) (readBody ++ "02" ++ "00000000")) "a CPU 1214C read reply"
+  check (!readOk (.trailing 4) (readBody ++ "02" ++ "00000001")) "the fill must be zero"
+  check (!readOk (.trailing 0) (readBody ++ "02" ++ "00000000")) "nothing may follow the id"
+  let writeOk (integrity : ResponseIntegrity) (hex : String) : Bool :=
+    match decodeWithIntegrity integrity decodeWriteReply (hexBytes hex) with
+    | .ok reply => reply.returnValue == 0 && reply.errors.isEmpty
+    | .error _ => false
+  -- the emulator's write reply, probed 2026-11-11: IntegrityId 02 first
+  check (writeOk .leading "02000000") "the emulator's write reply"
+  -- an S7-1200's write reply: the return value first, the id after the body
+  check (writeOk .afterBody "000005") "a CPU 1214C write reply"
+  check (!writeOk .leading "000005") "stripping a leading id misreads it"
+
 def testLegitimation : IO Unit := do
   check (toHex (Sha1.hash ByteArray.empty) == "da39a3ee5e6b4b0d3255bfef95601890afd80709") "SHA-1 of nothing"
   check (toHex (Sha1.hash "abc".toUTF8) == "a9993e364706816aba3e25717850c26c9cd0d89d") "SHA-1 of abc"
@@ -1162,5 +1200,6 @@ def main : IO Unit := do
   testBlob
   testLegitimation
   testChallengeMarker
+  testResponseIntegrity
   testRenewal
   IO.println "All lean-s7commplus tests passed."
