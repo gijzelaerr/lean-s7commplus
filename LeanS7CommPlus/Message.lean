@@ -1,5 +1,6 @@
 import LeanS7.Binary
 import LeanS7CommPlus.Protocol
+import LeanS7CommPlus.Reads
 
 /-!
 # Message headers and the integrity envelope
@@ -99,43 +100,6 @@ def decodeIntegrityEnvelope (data : ByteArray) : Except DecodeError (ByteArray �
   let (message, cursor) ← cursor.readBytes cursor.remaining
   cursor.finish
   pure (digest, message)
-
-/-! ## Reading a big-endian word pair back -/
-
-theorem uint32BE_halves (high low : UInt16) :
-    uint32BE (UInt32.ofNat (high.toNat * 65536 + low.toNat)) = uint16BE high ++ uint16BE low := by
-  have hh := high.toNat_lt
-  have hl := low.toNat_lt
-  have hn : (UInt32.ofNat (high.toNat * 65536 + low.toNat)).toNat = high.toNat * 65536 + low.toNat := by
-    rw [UInt32.toNat_ofNat']; omega
-  have key : ∀ a b c d e f g h : UInt8, a = e → b = f → c = g → d = h →
-      ByteArray.mk #[a, b, c, d] = ByteArray.mk #[e, f] ++ ByteArray.mk #[g, h] := by
-    intros; subst_vars; rfl
-  unfold uint32BE uint16BE
-  apply key <;> (apply UInt8.toNat_inj.mp; simp only [UInt8.toNat_ofNat', hn]; omega)
-
-theorem readUInt32BE_value (cursor next : Cursor) (value : UInt32)
-    (h : cursor.readUInt32BE = .ok (value, next)) :
-    cursor.offset + 4 ≤ cursor.data.size ∧
-      uint32BE value = cursor.data.extract cursor.offset (cursor.offset + 4) ∧
-      next = { cursor with offset := cursor.offset + 4 } := by
-  simp only [Cursor.readUInt32BE, bind, Except.bind, pure, Except.pure] at h
-  split at h
-  · contradiction
-  · rename_i first rest e1
-    split at h
-    · contradiction
-    · rename_i second rest' e2
-      injection h with h
-      injection h with hv hn
-      obtain ⟨l1, d1, n1⟩ := Cursor.readUInt16BE_value _ _ _ e1
-      rw [n1] at e2
-      obtain ⟨l2, d2, n2⟩ := Cursor.readUInt16BE_value _ _ _ e2
-      simp only at l2 d2 n2
-      refine ⟨by omega, ?_, by rw [← hn, n2]⟩
-      rw [← hv, uint32BE_halves, d1, d2, ← ByteArray.extract_two_uint16BE _ _ (by omega),
-        ← ByteArray.extract_two_uint16BE _ _ (by omega),
-        ByteArray.extract_append_extract_of_le _ (by omega) (by omega)]
 
 /-! ## Canonical forms -/
 

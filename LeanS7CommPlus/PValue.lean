@@ -1,6 +1,7 @@
 import LeanS7.Binary
 import LeanS7CommPlus.Vlq
 import LeanS7CommPlus.VlqSigned
+import LeanS7CommPlus.Reads
 
 /-!
 # Typed values (PValues)
@@ -234,7 +235,7 @@ theorem decodePValueBody_encodeBody (value : PValue) (hfit : value.LengthsFit)
     simp only [PValue.LengthsFit] at hfit
     rw [decodeBytes_encodeBytes _ _ _ hfit]
     rfl
-  all_goals first
+  all_goals try first
     | rfl
     | (rw [Cursor.readUInt8_append_byte]; rfl)
     | (rw [Cursor.readUInt16BE_append_uint16BE]; rfl)
@@ -277,5 +278,155 @@ theorem decodePValue_encode (value : PValue) (hfit : value.LengthsFit) (pre suff
   congr 2
   simp only [Cursor.mk.injEq, true_and]
   omega
+
+/-! ## Canonical form
+
+The decoder is strict about the flags byte (zero) and keeps every fixed-width field,
+REAL and LREAL included, as raw bits. Its only freedom is the VLQ fields: the integers
+`udint`, `aid`, `ulint`, `dint`, `lint` and `timespan`, the BLOB root, and the BLOB and
+WSTRING lengths. Each of those may be any form its VLQ canonical theorem allows. -/
+
+/-- The value bytes the decoder accepts for a value: the encoder's bytes, except that
+    each VLQ field may take any accepted VLQ form. -/
+def PValue.BodyForm : PValue → ByteArray → Prop
+  | .udint value, input => Vlq.UInt32Form value input
+  | .aid value, input => Vlq.UInt32Form value input
+  | .ulint value, input => Vlq.UInt64Form value input
+  | .dint value, input => Vlq.Int32Form value input
+  | .lint value, input => Vlq.Int64Form value input
+  | .timespan value, input => Vlq.Int64Form value input
+  | .blob root data, input => ∃ rootBytes lengthBytes, input = rootBytes ++ lengthBytes ++ data ∧
+      Vlq.UInt32Form root rootBytes ∧ Vlq.UInt32Form (UInt32.ofNat data.size) lengthBytes ∧
+      data.size < 2 ^ 32
+  | .wstring utf8, input => ∃ lengthBytes, input = lengthBytes ++ utf8 ∧
+      Vlq.UInt32Form (UInt32.ofNat utf8.size) lengthBytes ∧ utf8.size < 2 ^ 32
+  | value, input => input = value.encodeBody
+
+/-- Canonical form of a length-prefixed byte string: any accepted VLQ form of the
+    length, then exactly that many bytes. -/
+theorem decodeBytes_canonical (cursor next : Cursor) (data : ByteArray)
+    (h : decodeBytes cursor = .ok (data, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      ∃ lengthBytes, cursor.data.extract cursor.offset next.offset = lengthBytes ++ data ∧
+        Vlq.UInt32Form (UInt32.ofNat data.size) lengthBytes ∧ data.size < 2 ^ 32 := by
+  simp only [decodeBytes, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i read result hread
+    obtain ⟨hd1, hle1, hform⟩ := Vlq.decodeUInt32_form _ _ _ hread
+    have hsize := readBytes_size _ _ _ _ h
+    obtain ⟨hp, hn⟩ := readBytes_extract _ _ _ _ h
+    have hlen : UInt32.ofNat data.size = result.fst := by
+      rw [hsize, UInt32.ofNat_toNat]
+    refine ⟨by rw [hn]; exact hd1, by rw [hn]; simp; omega,
+      cursor.data.extract cursor.offset result.snd.offset, ?_, by rw [hlen]; exact hform,
+      by rw [hsize]; exact result.fst.toNat_lt⟩
+    rw [hp, hn, hd1]
+    simp only
+    rw [ByteArray.extract_append_extract_of_le _ hle1 (by omega)]
+
+/-- Canonical form of a PValue body: the decoder reads exactly the bytes of the
+    datatype it was given, in a form `PValue.BodyForm` allows. -/
+theorem decodePValueBody_canonical (datatype : UInt8) (cursor next : Cursor) (value : PValue)
+    (h : decodePValueBody datatype cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧ value.datatype = datatype ∧
+      value.BodyForm (cursor.data.extract cursor.offset next.offset) := by
+  unfold decodePValueBody at h
+  repeat' (refine Or.elim (ite_eq_cases h) (fun hh => ?_) (fun hh => ?_) <;>
+    (clear h; first | (obtain ⟨hc, h⟩ := hh; subst hc) | obtain ⟨-, h⟩ := hh))
+  all_goals first
+    | (obtain ⟨⟨v, c⟩, he, hf⟩ := Except.map_eq_ok h
+       simp only [Prod.mk.injEq] at hf
+       obtain ⟨rfl, rfl⟩ := hf
+       first
+         | (with_reducible (obtain ⟨-, hx, rfl⟩ := readUInt8_extract _ _ _ he)
+            exact ⟨rfl, by simp, rfl, hx.symm⟩)
+         | (with_reducible (obtain ⟨-, hx, rfl⟩ := readUInt16BE_extract _ _ _ he)
+            exact ⟨rfl, by simp, rfl, hx.symm⟩)
+         | (with_reducible (obtain ⟨-, hx, rfl⟩ := readUInt32BE_value _ _ _ he)
+            exact ⟨rfl, by simp, rfl, hx.symm⟩)
+         | (with_reducible (obtain ⟨-, hx, rfl⟩ := readUInt64BE_value _ _ _ he)
+            exact ⟨rfl, by simp, rfl, hx.symm⟩)
+         | (with_reducible (obtain ⟨hd, hle, hf⟩ := Vlq.decodeUInt32_form _ _ _ he)
+            exact ⟨hd, hle, rfl, hf⟩)
+         | (with_reducible (obtain ⟨hd, hle, hf⟩ := Vlq.decodeUInt64_form _ _ _ he)
+            exact ⟨hd, hle, rfl, hf⟩)
+         | (with_reducible (obtain ⟨hd, hle, hf⟩ := Vlq.decodeInt32_form _ _ _ he)
+            exact ⟨hd, hle, rfl, hf⟩)
+         | (with_reducible (obtain ⟨hd, hle, hf⟩ := Vlq.decodeInt64_form _ _ _ he)
+            exact ⟨hd, hle, rfl, hf⟩)
+         | (with_reducible (obtain ⟨hd, hle, lengthBytes, hx, hf, hs⟩ := decodeBytes_canonical _ _ _ he)
+            exact ⟨hd, hle, rfl, lengthBytes, hx, hf, hs⟩))
+    | (simp only [bind, Except.bind, pure, Except.pure] at h
+       split at h
+       · contradiction
+       · rename_i read1 r1 hr1
+         split at h
+         · contradiction
+         · rename_i read2 r2 hr2
+           simp only [Except.ok.injEq, Prod.mk.injEq] at h
+           obtain ⟨rfl, rfl⟩ := h
+           obtain ⟨hd1, hle1, hf1⟩ := Vlq.decodeUInt32_form _ _ _ hr1
+           obtain ⟨hd2, hle2, lengthBytes, hx, hf2, hs⟩ := decodeBytes_canonical _ _ _ hr2
+           rw [hd1] at hx
+           refine ⟨by rw [hd2, hd1], by omega, rfl,
+             cursor.data.extract cursor.offset r1.snd.offset, lengthBytes, ?_, hf1, hf2, hs⟩
+           rw [← ByteArray.extract_append_extract_of_le _ hle1 hle2, hx, ByteArray.append_assoc])
+    | (simp only [Except.ok.injEq, Prod.mk.injEq] at h
+       obtain ⟨rfl, rfl⟩ := h
+       refine ⟨rfl, Nat.le_refl _, rfl, ?_⟩
+       show _ = ByteArray.empty
+       apply ByteArray.ext
+       simp)
+    | contradiction
+
+/-- Canonical form of a PValue: a zero flags byte, the datatype byte of the decoded
+    value, and its value bytes in a form `PValue.BodyForm` allows. Nothing else. -/
+theorem decodePValue_canonical (cursor next : Cursor) (value : PValue)
+    (h : decodePValue cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      ∃ body, cursor.data.extract cursor.offset next.offset =
+          bytes #[0x00, value.datatype] ++ body ∧ value.BodyForm body := by
+  simp only [decodePValue, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i read1 r1 hr1
+    split at h
+    · simp [throw, throwThe, MonadExceptOf.throw] at h
+    · rename_i hflags
+      split at h
+      · contradiction
+      · rename_i read2 r2 hr2
+        obtain ⟨-, hx1, hn1⟩ := readUInt8_extract _ _ _ hr1
+        rw [hn1] at hr2
+        obtain ⟨-, hx2, hn2⟩ := readUInt8_extract _ _ _ hr2
+        obtain ⟨hd, hle, hdt, hbody⟩ := decodePValueBody_canonical _ _ _ _ h
+        rw [hn2] at hd hle hbody
+        simp only at hd hle hbody hx2
+        have hzero : r1.fst = 0x00 := by simpa using hflags
+        refine ⟨hd, by omega, cursor.data.extract (cursor.offset + 1 + 1) next.offset, ?_, hbody⟩
+        rw [bytes_pair, hdt, ← hzero, hx1, hx2,
+          ByteArray.extract_append_extract_of_le _ (by omega) (by omega),
+          ByteArray.extract_append_extract_of_le _ (by omega) hle]
+
+/-- The encoder's own bytes are one of the accepted forms, so `BodyForm` describes
+    what the encoder writes as well as what the decoder reads. -/
+theorem PValue.bodyForm_encodeBody (value : PValue) (hfit : value.LengthsFit) :
+    value.BodyForm value.encodeBody := by
+  cases value with
+  | udint v => exact Vlq.uint32Form_encode v
+  | aid v => exact Vlq.uint32Form_encode v
+  | ulint v => exact Vlq.uint64Form_encode v
+  | dint v => exact Vlq.int32Form_encode v
+  | lint v => exact Vlq.int64Form_encode v
+  | timespan v => exact Vlq.int64Form_encode v
+  | blob root data =>
+    exact ⟨Vlq.encodeUInt32 root, Vlq.encodeUInt32 (UInt32.ofNat data.size),
+      by simp [PValue.encodeBody, encodeBytes, ByteArray.append_assoc],
+      Vlq.uint32Form_encode root, Vlq.uint32Form_encode _, hfit⟩
+  | wstring utf8 =>
+    exact ⟨Vlq.encodeUInt32 (UInt32.ofNat utf8.size), by simp [PValue.encodeBody, encodeBytes],
+      Vlq.uint32Form_encode _, hfit⟩
+  | _ => rfl
 
 end LeanS7CommPlus
