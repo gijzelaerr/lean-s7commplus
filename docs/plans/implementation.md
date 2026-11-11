@@ -4,9 +4,34 @@ Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
 PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
-for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ) is
-done, 8b–8f are not started. Decision 1 is provisional (lean-s7 pinned to a commit).
-The other decisions are open.
+for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ)
+and 8b (PValues) are done, 8c–8f are not started. Decision 1 is provisional
+(lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 8b results (PValues)
+
+No decoder changed. The VLQ canonical theorems of 8a are restated as predicates on the
+consumed bytes (`Vlq.UInt32Form`, `Vlq.UInt64Form`, `Vlq.Int32Form`, `Vlq.Int64Form`),
+with `decodeUInt32_form` and its siblings in cursor form, so compound decoders can
+join byte ranges. The encoders' own output satisfies them (`uint32Form_encode` and
+siblings).
+
+- **`PValue.BodyForm`**: the value bytes the decoder accepts. For every fixed-width
+  datatype that is exactly `encodeBody`; for the six VLQ datatypes it is the matching
+  form; a BLOB is a root in any 32-bit form, a length in any 32-bit form, and exactly
+  that many bytes; a WSTRING is the same without the root.
+- **`decodeBytes_canonical`**, **`decodePValueBody_canonical`** and
+  **`decodePValue_canonical`**: an accepted PValue is a zero flags byte, the datatype
+  byte of the decoded value, and a `BodyForm` body. **`PValue.bodyForm_encodeBody`**:
+  the encoder's bytes are one of those forms.
+- New module `LeanS7CommPlus.Reads`: what each fixed-width cursor read consumes (8, 16,
+  32 and 64 bits, and `readBytes`). `uint32BE_halves` and `readUInt32BE_value` moved
+  there from `Message`, unchanged.
+
+Proof note: `split` gives up on the 22-way datatype dispatch (its internal `simp` runs
+out of steps), so the proof peels one `if` at a time with `ite_eq_cases`. It also
+matches each reader lemma with `with_reducible`: at default transparency, a wrong
+reader made Lean unfold both decoders before failing, and the proof timed out.
 
 ## Phase 8a results (64-bit VLQ and the group-count encoders)
 
@@ -881,7 +906,7 @@ theorem characterises the input instead of re-encoding it).
 | `decodeFrame`, `decodeFragments`, `readFragment`, `decodeRequestHeader`, `decodeResponseHeader`, `decodeIntegrityEnvelope`, `openV3`, `openFragments`, `Keyed.openReply` | yes | yes | strict, apart from the two reserved header words | done |
 | `Vlq.decodeUInt64` | yes | yes (8a) | lenient: leading `0x80` groups, and a nine-byte form for every value. After eight continuation groups the ninth byte counts all 8 bits, so any value below 2⁶⁴ is also eight groups carrying its top 56 bits followed by its low byte. `encodeUInt64` uses that form only from 2⁵⁶ up; below that, both forms are accepted (e.g. `80 80 80 80 80 80 80 80 05` decodes to 5) | done |
 | `Vlq.decodeInt64` | yes | yes (8a) | lenient: sign-group padding, plus the nine-byte form with width 2⁶⁴ | done |
-| `decodeBytes`, `decodePValue`, `decodePValueBody` | yes | no | strict flags byte (must be 0); `real` and `lreal` are kept as raw bits, so no float loss. Lenient only through the VLQ fields: `udint`, `aid`, `dint`, `ulint`, `lint`, `timespan`, the BLOB root and the BLOB/WSTRING lengths | 8b |
+| `decodeBytes`, `decodePValue`, `decodePValueBody` | yes | yes (8b) | strict flags byte (must be 0); `real` and `lreal` are kept as raw bits, so no float loss. Lenient only through the VLQ fields: `udint`, `aid`, `dint`, `ulint`, `lint`, `timespan`, the BLOB root and the BLOB/WSTRING lengths | done |
 | `decodeValue`, `decodeArray`, `decodeItem`, `decodeItems`, `decodeTree` | yes | no | lenient through PValue and VLQ; the stack and the fuel bound may add more (to classify) | 8c |
 | `decodeSecurityKey` | yes | no | through the tree codec; to classify | 8d |
 | `decodeCreateObjectReply` | **no** | no | to classify: it reads the return value, the object ids and the tree, then picks out the fingerprint and the challenge. Re-encodable or lossy depends on what `CreateObjectReply` keeps | 8d |

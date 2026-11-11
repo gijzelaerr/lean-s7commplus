@@ -499,4 +499,110 @@ theorem decodeInt64_encodeInt64Long (value : Int64) (pre suffix : ByteArray) :
   rw [if_pos ⟨hlow, hhigh⟩]
   simp only [pure, Except.pure, Int64.ofInt_toInt]
 
+/-! ## Accepted forms
+
+The canonical theorems as predicates on the bytes a decoder consumed, in the cursor
+form the compound decoders (PValues, trees, messages) build on. -/
+
+/-- The bytes `decodeUInt32` accepts for a value. -/
+def UInt32Form (value : UInt32) (input : ByteArray) : Prop :=
+  ∃ zeros, input = encodeNatPadded zeros value.toNat
+
+/-- The bytes `decodeUInt64` accepts for a value. -/
+def UInt64Form (value : UInt64) (input : ByteArray) : Prop :=
+  (∃ zeros, input = encodeNatPadded zeros value.toNat) ∨ input = encodeUInt64Long value
+
+/-- The bytes `decodeInt32` accepts for a value. -/
+def Int32Form (value : Int32) (input : ByteArray) : Prop :=
+  ∃ count, 1 ≤ count ∧ count ≤ 5 ∧ input = encodeSignedGroups count value.toInt
+
+/-- The bytes `decodeInt64` accepts for a value. -/
+def Int64Form (value : Int64) (input : ByteArray) : Prop :=
+  (∃ count, 1 ≤ count ∧ count ≤ 8 ∧ input = encodeSignedGroups count value.toInt) ∨
+    input = encodeInt64Long value
+
+theorem decodeUInt32_advances (cursor next : Cursor) (value : UInt32)
+    (h : decodeUInt32 cursor = .ok (value, next)) : cursor.offset < next.offset := by
+  simp only [decodeUInt32, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i read result hread
+    split at h
+    · simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      obtain ⟨-, gs, hne, -, -, hoff, -⟩ := readGroups_bytes _ _ _ _ _ hread
+      have : 0 < gs.length := by
+        cases gs with
+        | nil => exact absurd rfl hne
+        | cons _ _ => simp
+      omega
+    · simp [throw, throwThe, MonadExceptOf.throw] at h
+
+theorem decodeUInt64_advances (cursor next : Cursor) (value : UInt64)
+    (h : decodeUInt64 cursor = .ok (value, next)) : cursor.offset < next.offset := by
+  simp only [decodeUInt64, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i read result hread
+    split at h
+    · simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      obtain ⟨-, hcases⟩ := readGroupsThenByte_bytes _ _ _ _ _ hread
+      rcases hcases with ⟨gs, hne, -, -, hoff, -⟩ | ⟨gs, last, -, -, hoff, -⟩
+      · have : 0 < gs.length := by
+          cases gs with
+          | nil => exact absurd rfl hne
+          | cons _ _ => simp
+        omega
+      · omega
+    · simp [throw, throwThe, MonadExceptOf.throw] at h
+
+theorem decodeUInt32_form (cursor next : Cursor) (value : UInt32)
+    (h : decodeUInt32 cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      UInt32Form value (cursor.data.extract cursor.offset next.offset) := by
+  obtain ⟨hdata, -, zeros, hext⟩ := decodeUInt32_canonical _ _ _ h
+  exact ⟨hdata, Nat.le_of_lt (decodeUInt32_advances _ _ _ h), zeros, hext⟩
+
+theorem decodeUInt64_form (cursor next : Cursor) (value : UInt64)
+    (h : decodeUInt64 cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      UInt64Form value (cursor.data.extract cursor.offset next.offset) := by
+  obtain ⟨hdata, -, hform⟩ := decodeUInt64_canonical _ _ _ h
+  exact ⟨hdata, Nat.le_of_lt (decodeUInt64_advances _ _ _ h), hform⟩
+
+theorem decodeInt32_form (cursor next : Cursor) (value : Int32)
+    (h : decodeInt32 cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      Int32Form value (cursor.data.extract cursor.offset next.offset) := by
+  obtain ⟨hdata, count, hpos, hle, hoff, hext⟩ := decodeInt32_canonical _ _ _ h
+  exact ⟨hdata, by omega, count, hpos, hle, hext⟩
+
+theorem decodeInt64_form (cursor next : Cursor) (value : Int64)
+    (h : decodeInt64 cursor = .ok (value, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      Int64Form value (cursor.data.extract cursor.offset next.offset) := by
+  obtain ⟨hdata, hcases⟩ := decodeInt64_canonical _ _ _ h
+  rcases hcases with ⟨count, hpos, hle, hoff, hext⟩ | ⟨hoff, hext⟩
+  · exact ⟨hdata, by omega, Or.inl ⟨count, hpos, hle, hext⟩⟩
+  · exact ⟨hdata, by omega, Or.inr hext⟩
+
+/-- The encoders' own output is one of the accepted forms. -/
+theorem uint32Form_encode (value : UInt32) : UInt32Form value (encodeUInt32 value) :=
+  ⟨0, by simp [encodeNatPadded, encodeUInt32]⟩
+
+theorem uint64Form_encode (value : UInt64) : UInt64Form value (encodeUInt64 value) := by
+  by_cases hsmall : value.toNat < 2 ^ 56
+  · exact Or.inl ⟨0, by simp [encodeNatPadded, encodeUInt64, hsmall]⟩
+  · exact Or.inr (encodeUInt64_of_le value (by omega))
+
+theorem int32Form_encode (value : Int32) : Int32Form value (encodeInt32 value) :=
+  ⟨signedCount 4 value.toInt.natAbs, signedCount_pos _ _, signedCount_le _ _, rfl⟩
+
+theorem int64Form_encode (value : Int64) : Int64Form value (encodeInt64 value) := by
+  by_cases hsmall : value.toInt.natAbs < 2 ^ 55
+  · exact Or.inl ⟨signedCount 7 value.toInt.natAbs, signedCount_pos _ _, signedCount_le _ _,
+      by simp [encodeInt64, hsmall]⟩
+  · exact Or.inr (encodeInt64_of_le value (by omega))
+
 end LeanS7CommPlus.Vlq

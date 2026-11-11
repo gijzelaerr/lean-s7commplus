@@ -45,6 +45,12 @@ Implemented and proved so far:
 - **Scalar PValues** (`LeanS7CommPlus.PValue`): all 22 scalar datatypes, BLOB and
   WSTRING. `decodePValue_encode`: decoding the encoding of any value, inside
   arbitrary surrounding bytes, returns it and consumes exactly its encoding.
+  `decodePValue_canonical`: an accepted PValue is a zero flags byte, the datatype of
+  the decoded value and its value bytes in `PValue.BodyForm`: the encoder's bytes,
+  except that each VLQ field (the VLQ integers, the BLOB root, the BLOB and WSTRING
+  lengths) may take any form the VLQ theorems allow. Fixed-width fields, REAL and
+  LREAL included, are kept as raw bits. `PValue.bodyForm_encodeBody`: the encoder's
+  own bytes are one of those forms.
 - **Object trees** (`LeanS7CommPlus.Tree`): objects, attributes, relations, fixed-size
   arrays and nested structs, read as a flat item sequence with a stack.
   `decodeValue_encode` and `decodeTree_encode`: any well-nested tree, inside arbitrary
