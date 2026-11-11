@@ -3,8 +3,9 @@
 Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256 and
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
-PLCSIM's family 03, is optional and waits for the owner. Decision 1 is provisional
-(lean-s7 pinned to a commit). The other decisions are open.
+PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
+for the decoders that predate that rule, is planned (2026-11-11) and not started.
+Decision 1 is provisional (lean-s7 pinned to a commit). The other decisions are open.
 
 ## Phase 7e results (key renewal)
 
@@ -213,6 +214,12 @@ exchange, with the record layer behind the same boundary as the MAC of phase 5.
 ## What remains
 
 The phases are done as far as the decisions allow. What is left, and what it waits for:
+
+**Planned (phase 8):** canonical-form theorems for the decoders that only have round
+trips (see "Phase 8" below). Needs no hardware.
+
+**lean-s7 pin:** `lakefile.toml` pins lean-s7 `main` at `69dbcb8` until lean-s7 0.3.0
+is tagged. lean-s7 is still at 0.2.0; moving the pin waits for that release.
 
 **Optional (phase 7f):** PLCSIM's key family 03 (a 216-byte blob, an AES-GCM
 legitimation answer, and its own request layouts), only if wanted. Phase 7 (7a–7e) is
@@ -816,6 +823,122 @@ monoliths or from `thomas-v2/S7CommPlusDriver` (LGPL).
   caller to supply the public key.
 - **A capture with recorded client randomness** from an S7-1200 FW V4.2, if one can be
   made, for an end-to-end KAT.
+
+## Phase 8: canonical decoding for the remaining decoders (plan, 2026-11-11)
+
+The repository's rule is now that a decoder comes with its round-trip theorem and its
+canonical-form theorem (or proved leniency) in the same PR (`CLAUDE.md`). Most decoders
+predate that rule: they have round trips, which say the decoder accepts what the encoder
+writes, but nothing says what else they accept. Phase 8 closes that gap, as lean-s7's
+[canonical-decoding plan](https://github.com/gijzelaerr/lean-s7/blob/main/docs/plans/canonical-decoding.md)
+did for classic S7. It needs no hardware and changes no decoder unless a proof finds
+something wrong (see "Findings" below).
+
+### Classification
+
+Each decoder is classified before anything is proved: **strict** (an accepted input is
+exactly the encoding of its result), **lenient** (accepted inputs differ from the
+encoding only in a named freedom), or **lossy** (the result drops information, so the
+theorem characterises the input instead of re-encoding it).
+
+| Decoder | Round trip | Canonical | Class and freedom | Sub-phase |
+| --- | --- | --- | --- | --- |
+| `Vlq.decodeUInt32`, `Vlq.decodeInt32` | yes | yes | lenient: leading `0x80` groups (unsigned) or sign groups (signed) | done |
+| `decodeFrame`, `decodeFragments`, `readFragment`, `decodeRequestHeader`, `decodeResponseHeader`, `decodeIntegrityEnvelope`, `openV3`, `openFragments`, `Keyed.openReply` | yes | yes | strict, apart from the two reserved header words | done |
+| `Vlq.decodeUInt64` | yes | no | lenient: leading `0x80` groups, and a nine-byte form for every value. After eight continuation groups the ninth byte counts all 8 bits, so any value below 2⁶⁴ is also eight groups carrying its top 56 bits followed by its low byte. `encodeUInt64` uses that form only from 2⁵⁶ up; below that, both forms are accepted (e.g. `80 80 80 80 80 80 80 80 05` decodes to 5) | 8a |
+| `Vlq.decodeInt64` | yes | no | lenient: sign-group padding, plus the nine-byte form with width 2⁶⁴ | 8a |
+| `decodeBytes`, `decodePValue`, `decodePValueBody` | yes | no | strict flags byte (must be 0); `real` and `lreal` are kept as raw bits, so no float loss. Lenient only through the VLQ fields: `udint`, `aid`, `dint`, `ulint`, `lint`, `timespan`, the BLOB root and the BLOB/WSTRING lengths | 8b |
+| `decodeValue`, `decodeArray`, `decodeItem`, `decodeItems`, `decodeTree` | yes | no | lenient through PValue and VLQ; the stack and the fuel bound may add more (to classify) | 8c |
+| `decodeSecurityKey` | yes | no | through the tree codec; to classify | 8d |
+| `decodeCreateObjectReply` | **no** | no | to classify: it reads the return value, the object ids and the tree, then picks out the fingerprint and the challenge. Re-encodable or lossy depends on what `CreateObjectReply` keeps | 8d |
+| `decodeLegitimationChallenge` | **no** | no | lenient: one optional zero byte after the return value is skipped. Rejects a non-zero return value | 8d |
+| `decodeItemAddress`, `decodeAddresses`, `decodeVlqList` | yes | no | lenient through VLQ | 8e |
+| `decodeObjectQualifier` | yes | no | strict prefix; the fixed form is strict, and the VLQ form inherits VLQ leniency and needs a zero terminator | 8e |
+| `decodeReadRequest`, `decodeReadRequestBody`, `decodeReadReply`, `decodeValueList`, `decodeErrorList` | yes | no | through the above; the reply lists run to the end of the payload | 8e |
+| `decodeLeadingIntegrityId`, `decodeTrailingIntegrityId` | yes | no | lenient through VLQ; the trailing form requires exactly `tail` zero bytes | 8e |
+| `decodeWriteRequest`, `decodeWriteRequestBody`, `decodeNumberedValues`, `decodeWriteReply` | yes | no | through the above; the fill must be zero | 8f |
+| `parseFingerprint` | no | no | lossy and not a wire decoder: it parses a string and upper-cases the key id. Characterise (accepted shape, upper-case output), don't re-encode | 8d |
+| `Client.decodeName` | no | no | lossy display helper for browse results (`Char.ofNat` maps invalid code points). Out of scope | — |
+| `findFingerprint`, `findChallenge`, `attributeBytes` | — | — | projections over a decoded tree, not decoders. Out of scope | — |
+
+`drawBlob` and `drawLegitimationAnswer`, the two `partial def`s in `Client.lean`, are
+retry loops over random draws, not decoders. They stay out of scope.
+
+### Statement forms
+
+- **Field decoders** (VLQ, PValue, tree, item addresses, qualifiers) take the cursor
+  form of `decodeRequestHeader_canonical`: `next.data = cursor.data`, a bound on
+  `next.offset`, and `cursor.data.extract cursor.offset next.offset` equal to an
+  encoding of the result. That way they compose inside larger messages.
+- **Whole-payload decoders** (the CreateObject reply, the read and write replies, the
+  legitimation challenge) take the buffer form of `decodeFrame_canonical`: an accepted
+  payload equals an encoding of the result.
+- **Leniency is stated once, in 8a.** The freedom of each VLQ kind is captured by an
+  encoder that takes the number of groups. The signed one exists already:
+  `decodeInt32_canonical` says the accepted bytes are `encodeSignedGroups count value`.
+  8a adds the unsigned counterpart and the nine-byte 64-bit forms. The compound
+  theorems then say that the input "is the encoding with these group counts", and
+  don't restate the freedom.
+
+### Sub-phases (one PR each)
+
+- **8a. 64-bit VLQ and the padded encoders.** Canonical theorems for `decodeUInt64` and
+  `decodeInt64`, including the nine-byte form; a group-count encoder for each VLQ kind
+  (reusing `encodeSignedGroups` for the signed ones), each with the theorem that the
+  minimal encoding is one of its cases; `decodeUInt32_canonical` restated through the
+  unsigned one. Check what `s7commplus`'s VLQ
+  decoder does with the nine-byte form of a small value, and add that case to
+  `integration/fuzz.py` if it doesn't produce it today.
+- **8b. PValues**, including `decodeBytes` and the BLOB and WSTRING lengths.
+- **8c. Object trees.** The largest step. `decodeItems` is fuel-bounded over a stack
+  of open frames, so the proof needs an invariant over the items decoded so far and the
+  stack, by induction on the fuel, in the style of lean-s7's phase 9 loop invariant.
+  The theorem: an accepted tree is the padded encoding of its item sequence, and that
+  sequence is well nested.
+- **8d. Session payloads**, the first bytes a controller controls in a SessionKey
+  session: `decodeSecurityKey`, `decodeCreateObjectReply` and
+  `decodeLegitimationChallenge`. The last two get an encoder first (as lean-s7's
+  phase 7 added one for USER_DATA responses), then a round trip and the canonical or
+  lossy theorem; the CPU 1214C fixtures must re-encode byte for byte through the new
+  encoders. `parseFingerprint` gets its characterisation. Known finding:
+  `decodeLegitimationChallenge` peeks at the optional zero byte with `payload.get!`,
+  the panicking indexing the conventions forbid. A payload that ends right after the
+  return value panics and reads a default 0. Replace it with a bounded cursor read
+  first, as its own commit.
+- **8e. GetMultiVariables and IntegrityIds**: item addresses, both qualifier forms, the
+  read request and reply, and the leading and trailing IntegrityId decoders.
+- **8f. SetMultiVariables**: numbered values, the write request and reply.
+
+8a is first because every later theorem uses its padded encoders; 8b and 8c come before
+the messages built from them. 8d goes before 8e and 8f because it covers controller
+input that precedes any data request.
+
+### Findings and checks
+
+- If a proof shows that a decoder accepts input it shouldn't, the fix goes in a
+  separate commit in the same PR. The PR states the input, the old and new behaviour,
+  and what `s7commplus` does with that input, and adds it to `integration/fuzz.py`
+  (accept-different must stay 0).
+- Every PR runs the required checks in `CLAUDE.md`, including the axiom audit.
+- New theorem names go into `README.md` only in the PR that proves them: the axiom
+  audit fails on a cited theorem that doesn't exist.
+- Phase 8 is done when every decoder in the table above has a canonical-form, proved
+  leniency or lossy characterisation theorem, or an explicit out-of-scope line.
+
+### Decisions for the owner
+
+- **VLQ strictness (open decision 4).** *Recommended: keep `s7commplus`'s leniency and
+  prove it, as the 32-bit theorems already do.* Strict decoding would make every
+  canonical theorem a plain equality, but it would change all VLQ decoders, diverge
+  from the Python reference, and might reject something a controller sends; no capture
+  shows a controller sending, or refusing, a padded VLQ.
+- **Proof standard (open decision 2).** `CLAUDE.md` already requires the canonical
+  theorem in the same PR for new decoders. *Recommended: record decision 2 as yes, and
+  treat phase 8 as clearing the backlog.*
+- **Phase 8 or something else next.** The alternatives are 7f (PLCSIM's family 03) and
+  a first release (open decision 5). Phase 8 is recommended first: it is the only one
+  that strengthens what the project claims to prove, and it needs neither hardware nor
+  new cryptography.
 
 ## Evidence and hardware boundaries
 
