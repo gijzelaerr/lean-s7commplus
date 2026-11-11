@@ -344,4 +344,37 @@ theorem decodeIntegrityEnvelope_encode (digest message : ByteArray) (hdigest : d
   simp [Cursor.finish, pure, Except.pure, ByteArray.size_append, hdigest]
   rw [if_pos (by omega)]
 
+/-! ## A response message's header and payload -/
+
+/-- Split a response message into its 10-byte header and its payload. -/
+def splitResponse (message : ByteArray) : Except DecodeError (ResponseHeader × ByteArray) :=
+  match decodeResponseHeader { data := message } with
+  | .error error => .error error
+  | .ok (header, _) => .ok (header, message.extract 10 message.size)
+
+theorem encodeResponseHeaderWith_size (reserved1 reserved2 : UInt16) (header : ResponseHeader) :
+    (encodeResponseHeaderWith reserved1 reserved2 header).size = 10 := by
+  simp [encodeResponseHeaderWith]
+
+/-- A split response is its header, in the form `decodeResponseHeader_canonical`
+    allows, followed by exactly the payload returned. -/
+theorem splitResponse_canonical (message payload : ByteArray) (header : ResponseHeader)
+    (h : splitResponse message = .ok (header, payload)) :
+    isResponseOpcode header.opcode ∧ ∃ reserved1 reserved2,
+      message = encodeResponseHeaderWith reserved1 reserved2 header ++ payload := by
+  unfold splitResponse at h
+  split at h
+  · contradiction
+  · rename_i decoded next hdecoded
+    simp only [Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    obtain ⟨-, hoff, hop, reserved1, reserved2, hext⟩ := decodeResponseHeader_canonical _ _ _ hdecoded
+    simp only [Nat.zero_add] at hoff hext
+    rw [hoff] at hext
+    have hsize := congrArg ByteArray.size hext
+    rw [ByteArray.size_extract, encodeResponseHeaderWith_size] at hsize
+    refine ⟨hop, reserved1, reserved2, ?_⟩
+    rw [← hext]
+    exact ByteArray.eq_extract_append_extract message 10 (by omega)
+
 end LeanS7CommPlus

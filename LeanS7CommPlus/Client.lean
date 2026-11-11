@@ -102,8 +102,8 @@ def Client.exchange (client : Client) (request : Request) :
   let message ← match keyed with
     | none => pure (← orFail "reply frame" (reassemble replyFrame)).2
     | some keyed => orFail "keyed reply" (keyed.openReply replyFrame)
-  let (reply, _) ← orFail "reply header" (decodeResponseHeader { data := message })
-  pure (reply, message.extract 10 message.size, header, sent, keyed)
+  let (reply, payload) ← orFail "reply header" (splitResponse message)
+  pure (reply, payload, header, sent, keyed)
 
 /-- Run one request through the session state machine. -/
 def Client.step (client : Client) (request : Request) (sessionId : ByteArray → Option UInt32 := fun _ => none) :
@@ -129,7 +129,7 @@ def Client.create (host : String) (port : UInt16) (timeoutMs : Option Nat) :
   pure (client, reply)
 
 def Client.checkSetupReply (setupReply : ByteArray) : IO Unit := do
-  let (returnValue, _) ← orFail "SetupSession reply" (Vlq.decodeUInt64 { data := setupReply })
+  let returnValue ← orFail "SetupSession reply" (decodeReturnValue setupReply)
   if returnValue != 0 then
     throw <| IO.userError s!"SetupSession failed with return value {returnValue}"
 
@@ -240,7 +240,7 @@ def Client.renewSessionKey (client : Client) (testKey2 : Option ByteArray := non
   Transport.sendData client.connection.socket frame client.timeoutMs
   let replyFrame ← receiveMessage client.connection client.timeoutMs
   let message ← orFail "renewal reply" (keyed.openReply replyFrame)
-  let (reply, _) ← orFail "renewal reply header" (decodeResponseHeader { data := message })
+  let (reply, _) ← orFail "renewal reply header" (splitResponse message)
   match sent.receive request header reply none, keyed.finishRenewal newKey replyFrame with
   | some session, some renewed => pure { client with session, keyed := some renewed }
   | _, _ =>
@@ -300,15 +300,7 @@ def Client.listDataBlocks (client : Client) : IO (Client × List (UInt32 × Stri
     throw <| IO.userError s!"EXPLORE failed with return value {returnValue}"
   -- s7commplus 0.3.0 sends the data blocks as consecutive top-level objects; later
   -- versions wrap them in thePLCProgram. Read every tree that follows.
-  let rec trees : Nat → Cursor → Except DecodeError (List Item)
-    | 0, _ => .ok []
-    | fuel + 1, cursor =>
-      match cursor.readUInt8 with
-      | .ok (0xa1, _) => do
-        let (items, cursor) ← decodeTree cursor
-        pure (items ++ (← trees fuel cursor))
-      | _ => .ok []
-  let items ← orFail "EXPLORE tree" (trees cursor.remaining cursor)
+  let items ← orFail "EXPLORE tree" (decodeTrees cursor.remaining cursor)
   -- Collect each data-block object (class 2574) with its name and block number.
   let rec collect : List Item → Option (UInt32 × String × UInt32) → List (UInt32 × String × UInt32)
     | [], _ => []

@@ -77,16 +77,42 @@ write; otherwise the session is closed. s7commplus renews every 25 minutes. -/
     (not the generic error), and after its leading IntegrityId, the low 16 bits of the
     return value have no sign bit (s7commplus `_check_set_variable_response`). -/
 def setVariableAccepted (message : ByteArray) : Bool :=
-  match decodeResponseHeader { data := message } with
+  match splitResponse message with
   | .error _ => false
-  | .ok (header, _) =>
+  | .ok (header, payload) =>
     header.function == FunctionCode.setVariable &&
-      match decodeLeadingIntegrityId (message.extract 10 message.size) with
+      match decodeLeadingIntegrityId payload with
       | .error _ => false
-      | .ok (_, payload) =>
-        match Vlq.decodeUInt64 { data := payload } with
-        | .ok (returnValue, _) => returnValue &&& 0x8000 == 0
+      | .ok (_, rest) =>
+        match decodeReturnValue rest with
+        | .ok returnValue => returnValue &&& 0x8000 == 0
         | .error _ => false
+
+/-- An accepted SetVariable reply is a response header with the SetVariable function,
+    a leading IntegrityId in any 32-bit VLQ form, and a return value whose low 16 bits
+    have no sign bit. -/
+theorem setVariableAccepted_spec (message : ByteArray) (h : setVariableAccepted message = true) :
+    ∃ header reserved1 reserved2 idBytes id rest returnValue,
+      message = encodeResponseHeaderWith reserved1 reserved2 header ++ (idBytes ++ rest) ∧
+      header.function = FunctionCode.setVariable ∧ Vlq.UInt32Form id idBytes ∧
+      decodeReturnValue rest = .ok returnValue ∧ returnValue &&& 0x8000 = 0 := by
+  unfold setVariableAccepted at h
+  split at h
+  · contradiction
+  · rename_i header payload hsplit
+    simp only [Bool.and_eq_true, beq_iff_eq] at h
+    obtain ⟨hfunction, h⟩ := h
+    split at h
+    · contradiction
+    · rename_i id rest hleading
+      split at h
+      · rename_i returnValue hreturn
+        obtain ⟨-, reserved1, reserved2, hmessage⟩ := splitResponse_canonical _ _ _ hsplit
+        obtain ⟨idBytes, hpayload, hform⟩ := decodeLeadingIntegrityId_canonical _ _ _ hleading
+        refine ⟨header, reserved1, reserved2, idBytes, id, rest, returnValue, ?_, hfunction, hform,
+          hreturn, by simpa using h⟩
+        rw [hmessage, hpayload]
+      · contradiction
 
 /-- Finish a renewal with the reply to the SecurityKey write: the session with the new
     key, or `none` when the session must be closed. -/

@@ -84,9 +84,21 @@ def decodeLegitimationChallenge (payload : ByteArray) : Except DecodeError ByteA
 /-- A legitimation reply is refused when its first value, read as a signed return
     value, is negative (the first check of s7commplus `_check_v1_legitimation_response`). -/
 def legitimationRefused (payload : ByteArray) : Bool :=
-  match Vlq.decodeUInt64 { data := payload } with
-  | .ok (value, _) => value ≥ 2 ^ 63
+  match decodeReturnValue payload with
+  | .ok value => value ≥ 2 ^ 63
   | .error _ => false
+
+/-- A legitimation reply is refused exactly when its leading return value decodes and,
+    read as signed, is negative. -/
+theorem legitimationRefused_iff (payload : ByteArray) :
+    legitimationRefused payload = true ↔
+      ∃ value, decodeReturnValue payload = .ok value ∧ 2 ^ 63 ≤ value := by
+  unfold legitimationRefused
+  split
+  · rename_i value hvalue
+    simp [hvalue]
+  · rename_i error herror
+    simp [herror]
 
 /-! ## What the challenge decoder accepts
 

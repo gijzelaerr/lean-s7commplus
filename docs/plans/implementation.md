@@ -7,8 +7,33 @@ PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical deco
 for the decoders that predate that rule, is done (8a–8f, 2026-11-11): every
 decoder in its classification table has a canonical-form, proved-leniency or lossy
 characterisation theorem, or an explicit out-of-scope line. Phase 9, the controller
-bytes the client still parses inline, is planned (2026-11-11). Decision 1 is provisional (lean-s7 pinned to a commit).
+bytes the client still parses inline, is planned (2026-11-11); 9a is done, and 9b
+waits for an owner decision. Decision 1 is provisional (lean-s7 pinned to a commit).
 The other decisions are open.
+
+## Phase 9a results (pure decoders for the client's inline parses)
+
+No behaviour changed: each function returns what the inline code computed, and the
+emulator run passes unchanged. The IO code in `Client.lean` now calls them:
+
+- **`splitResponse`** and **`splitResponse_canonical`**: a response message is its
+  header, in the form `decodeResponseHeader_canonical` allows, followed by exactly the
+  payload returned. `Client.exchange` and the renewal use it.
+- **`decodeReturnValue`** and **`decodeReturnValue_canonical`**: a 64-bit VLQ in any
+  accepted form at the start of the payload. `Client.checkSetupReply` and
+  `legitimationRefused` use it, and `legitimationRefused_iff` states when a
+  legitimation is refused.
+- **`setVariableAccepted_spec`**: an accepted renewal reply is a header with the
+  SetVariable function, a leading IntegrityId in any form, and a return value whose
+  low 16 bits have no sign bit.
+- **`decodeTrees`** and **`decodeTrees_canonical`**: the EXPLORE loop of
+  `listDataBlocks`, lifted out unchanged. It returns the items of consecutive
+  well-nested trees, each in an accepted form, back to back, and does not read what
+  follows them.
+
+Still ignored, as before: the bytes after a read or write reply's error list, the
+response IntegrityId's value, and what follows the last EXPLORE tree. 9b decides how
+to check the IntegrityId's position.
 
 ## Phase 8f results (SetMultiVariables)
 
