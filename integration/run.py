@@ -32,7 +32,9 @@ PASSWORD = "secret"
 
 
 def cli(port: int, *args: str, flags: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
-    prefix = ["--test-key2", KEY2.hex(), "--password", PASSWORD] if KEYED else []
+    # --emulator: the emulator places keyed write replies' IntegrityIds differently from
+    # a real controller of the same key family (LeanS7CommPlus.responseIntegrity).
+    prefix = ["--emulator", "--test-key2", KEY2.hex(), "--password", PASSWORD] if KEYED else []
     return subprocess.run(
         [str(CLI), *prefix, *flags, "127.0.0.1", str(port), *args], capture_output=True, text=True, timeout=60, check=False
     )
@@ -85,6 +87,14 @@ def run_checks(max_response_pdu: int | None, sessionkey: bool = False) -> None:
         expect(browse.returncode == 0 and browse.stdout.split("\n")[:2] == ["1 DB1", "7 DB7"], f"browse: {browse.stdout!r}")
 
         if sessionkey:
+            # Without --emulator the client expects a key-family-01 controller: a read reply
+            # with four fill bytes after its IntegrityId, which the emulator does not send.
+            controller = subprocess.run(
+                [str(CLI), "--test-key2", KEY2.hex(), "--password", PASSWORD, "127.0.0.1", str(port),
+                 "read", "1", "0", "4"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+            expect(controller.returncode != 0, f"a controller-profile read of the emulator is refused: {controller.stderr.strip()!r}")
             # The emulator answers the renewal's SecurityKey write with a generic error
             # frame; the Lean client refuses it, keeps the old key and closes.
             renewed = cli(port, "read", "1", "0", "4", flags=("--renew",))

@@ -44,6 +44,8 @@ structure Client where
   /-- The key family and public key of a SessionKey session, for renewals. -/
   keyOwner : Option (KeyFamily × ByteArray) := none
   timeoutMs : Option Nat
+  /-- The kind of peer, for where its keyed replies carry their IntegrityId. -/
+  peer : PeerProfile := .controller
 
 private def awaitIO (operation : Async α) : IO α := do
   let task ← operation.toIO
@@ -250,12 +252,19 @@ def Client.renewSessionKey (client : Client) (testKey2 : Option ByteArray := non
 def Client.qualifierForm (client : Client) : QualifierForm :=
   if client.keyed.isSome then .vlq else .fixed
 
+/-- Where this session's reply to a function carries its IntegrityId. -/
+def Client.responseIntegrity (client : Client) (function : UInt16) : ResponseIntegrity :=
+  match client.keyed, client.keyOwner with
+  | some _, some (family, _) => LeanS7CommPlus.responseIntegrity client.peer family function
+  | _, _ => .none
+
 /-- Read `size` bytes at `start` of data block `db`. -/
 def Client.readDb (client : Client) (db : UInt16) (start size : UInt32) : IO (Client × ByteArray) := do
   let request : ReadRequest :=
     { addresses := [ItemAddress.db db start size], form := client.qualifierForm, keyQualifier := 0 }
   let (client, payload) ← client.step (.read request)
-  let (reply, _) ← orFail "read reply" (decodeReadReply { data := payload })
+  let reply ← orFail "read reply"
+    (decodeWithIntegrity (client.responseIntegrity FunctionCode.getMultiVariables) decodeReadReply payload)
   let results ← orFail "read results" (reply.results 1)
   match results with
   | [.ok (.scalar (.blob _ data))] => pure (client, data)
@@ -269,11 +278,8 @@ def Client.writeDb (client : Client) (db : UInt16) (start : UInt32) (data : Byte
     { addresses := [ItemAddress.db db start (UInt32.ofNat data.size)],
       values := [.scalar (.blob 0 data)], form := client.qualifierForm, keyQualifier := 0 }
   let (client, payload) ← client.step (.write request)
-  -- A keyed write reply leads with its IntegrityId.
-  let payload ← if client.keyed.isSome then
-      pure (← orFail "write reply IntegrityId" (decodeLeadingIntegrityId payload)).2
-    else pure payload
-  let (reply, _) ← orFail "write reply" (decodeWriteReply { data := payload })
+  let reply ← orFail "write reply"
+    (decodeWithIntegrity (client.responseIntegrity FunctionCode.setMultiVariables) decodeWriteReply payload)
   if reply.returnValue != 0 then
     throw <| IO.userError s!"write failed with return value {reply.returnValue}"
   if let some (_, code) := reply.errors.head? then

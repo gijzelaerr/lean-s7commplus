@@ -67,13 +67,16 @@ def insertIntegrityId (payload : ByteArray) (tail : Nat) (id : UInt32) : ByteArr
   else Vlq.encodeUInt32 id ++ payload
 
 /-- Where a response carries its IntegrityId: nowhere (no integrity tracking), leading
-    the payload, or after the body and before `tail` fill bytes. Which one applies is a
-    controller fact per family and function. In the CPU 1214C V4.2 capture
-    (s7commplus#136) the GetMultiVariables reply has it trailing, before four fill bytes. -/
+    the payload, after the body and before exactly `tail` fill bytes, or after the body
+    in a layout that is not checked (s7commplus keeps those replies whole and never reads
+    the id). Which one applies is a peer fact per key family and function (see
+    `responseIntegrity`). In the CPU 1214C V4.2 capture (s7commplus#136) the
+    GetMultiVariables reply has it trailing, before four fill bytes. -/
 inductive ResponseIntegrity where
   | none
   | leading
   | trailing (tail : Nat)
+  | afterBody
   deriving Repr, BEq
 
 /-- Remove a leading IntegrityId. -/
@@ -275,5 +278,76 @@ theorem decodeTrailingIntegrityId_canonical (tail : Nat) (cursor : Cursor) (id :
       rw [hd] at hzeros
       exact ⟨_, by rw [← hzeros, ByteArray.extract_append_extract_of_le _ hle hsize], hform⟩
     · contradiction
+
+/-! ## Decoding a keyed reply body around its IntegrityId -/
+
+/-- Decode a reply body with the IntegrityId where `integrity` puts it. A leading id is
+    removed first; a trailing id must follow the body, with exactly `tail` zero bytes
+    after it; with `none` or `afterBody`, what follows the body is not read. The id's
+    value is not checked: the HMAC and the sequence number already bind a keyed reply to
+    its request. -/
+def decodeWithIntegrity {α : Type} (integrity : ResponseIntegrity)
+    (decodeBody : Cursor → Except DecodeError (α × Cursor)) (payload : ByteArray) :
+    Except DecodeError α :=
+  match integrity with
+  | .none | .afterBody => (decodeBody { data := payload }).map Prod.fst
+  | .leading =>
+    match decodeLeadingIntegrityId payload with
+    | .error error => .error error
+    | .ok (_, rest) => (decodeBody { data := rest }).map Prod.fst
+  | .trailing tail =>
+    match decodeBody { data := payload } with
+    | .error error => .error error
+    | .ok (body, cursor) =>
+      match decodeTrailingIntegrityId tail cursor with
+      | .error error => .error error
+      | .ok _ => .ok body
+
+/-- What `decodeWithIntegrity` accepts, in terms of the body decoder: the body after a
+    leading id in any 32-bit form; or the body from the start, then (`trailing`) an id
+    in any 32-bit form and exactly `tail` zero bytes to the end. -/
+theorem decodeWithIntegrity_spec {α : Type} (integrity : ResponseIntegrity)
+    (decodeBody : Cursor → Except DecodeError (α × Cursor)) (payload : ByteArray) (body : α)
+    (h : decodeWithIntegrity integrity decodeBody payload = .ok body) :
+    match integrity with
+    | .none | .afterBody => ∃ next, decodeBody { data := payload } = .ok (body, next)
+    | .leading => ∃ idBytes id rest next, payload = idBytes ++ rest ∧
+        Vlq.UInt32Form id idBytes ∧ decodeBody { data := rest } = .ok (body, next)
+    | .trailing tail => ∃ next idBytes id, decodeBody { data := payload } = .ok (body, next) ∧
+        next.data.extract next.offset next.data.size =
+          idBytes ++ ByteArray.mk (Array.replicate tail 0) ∧ Vlq.UInt32Form id idBytes := by
+  cases integrity with
+  | none =>
+    obtain ⟨⟨decoded, next⟩, he, hf⟩ := Except.map_eq_ok h
+    simp only at hf
+    subst hf
+    exact ⟨next, he⟩
+  | afterBody =>
+    obtain ⟨⟨decoded, next⟩, he, hf⟩ := Except.map_eq_ok h
+    simp only at hf
+    subst hf
+    exact ⟨next, he⟩
+  | leading =>
+    simp only [decodeWithIntegrity] at h
+    split at h
+    · contradiction
+    · rename_i id rest hleading
+      obtain ⟨⟨decoded, next⟩, he, hf⟩ := Except.map_eq_ok h
+      simp only at hf
+      subst hf
+      obtain ⟨idBytes, hpayload, hform⟩ := decodeLeadingIntegrityId_canonical _ _ _ hleading
+      exact ⟨idBytes, id, rest, next, hpayload, hform, he⟩
+  | trailing tail =>
+    simp only [decodeWithIntegrity] at h
+    split at h
+    · contradiction
+    · rename_i decoded next hbody
+      split at h
+      · contradiction
+      · rename_i id hid
+        simp only [Except.ok.injEq] at h
+        subst h
+        obtain ⟨idBytes, hzeros, hform⟩ := decodeTrailingIntegrityId_canonical _ _ _ hid
+        exact ⟨next, idBytes, id, hbody, hzeros, hform⟩
 
 end LeanS7CommPlus

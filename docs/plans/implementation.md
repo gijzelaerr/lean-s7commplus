@@ -7,9 +7,39 @@ PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical deco
 for the decoders that predate that rule, is done (8a–8f, 2026-11-11): every
 decoder in its classification table has a canonical-form, proved-leniency or lossy
 characterisation theorem, or an explicit out-of-scope line. Phase 9, the controller
-bytes the client still parses inline, is planned (2026-11-11); 9a is done, and 9b
-waits for an owner decision. Decision 1 is provisional (lean-s7 pinned to a commit).
-The other decisions are open.
+bytes the client still parses inline, is done (9a and 9b, 2026-11-11). Decision 1 is
+provisional (lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 9b results (response IntegrityId profiles)
+
+The owner chose a default per key family that follows s7commplus's hardware rules, plus
+an explicit emulator profile. **This changes what the client accepts**, in this commit
+only:
+
+- **`ResponseIntegrity.afterBody`**: the id follows the body in a layout that is not
+  checked, which is how s7commplus treats those replies.
+- **`PeerProfile`** (`controller`, the default, or `emulator`) and
+  **`responseIntegrity`**: where a keyed reply carries its id, per peer, key family and
+  function, with the evidence for each rule. A controller's GetMultiVariables reply
+  has it after the body: on an S7-1200 before four fill bytes, on the others
+  unchecked. EXPLORE replies, every PLCSIM reply, and an S7-1200's CreateObject and
+  SetMultiVariables replies also carry it after the body. Every other reply leads
+  with it. The emulator puts it after the body with no fill in read replies, at the
+  start in write replies, and after the body in EXPLORE replies.
+- **`decodeWithIntegrity`** and **`decodeWithIntegrity_spec`**: decode a reply body
+  around its id. A leading id is removed first. A trailing id must follow the body
+  with exactly `tail` zero bytes after it. The id's value is not checked.
+- `Client.readDb` and `Client.writeDb` use them. A keyed write to a key-family-01
+  controller no longer strips a leading id, which would have misread a CPU 1214C's
+  reply. A keyed read now checks the trailing id's shape where it is known.
+- `lean-s7commplus-cli --emulator` selects the emulator profile, and
+  `integration/run.py` passes it. A new check there shows that the controller profile
+  refuses the emulator's read reply, which has no fill.
+- `testResponseIntegrity` covers the table, the emulator's probed replies and a
+  1214C-style read and write.
+
+What s7commplus does: it never reads the id. It keeps the after-body replies whole and
+strips a leading VLQ otherwise; its write check only looks for a negative first value.
 
 ## Phase 9a results (pure decoders for the client's inline parses)
 
@@ -408,9 +438,9 @@ The phases are done as far as the decisions allow. What is left, and what it wai
 
 **Phase 8 is done** for the named decoders in its table (see the phase 8 results).
 
-**Planned (phase 9):** the controller bytes the client still parses inline, outside a
-named decoder (see "Phase 9" below). 9a needs no hardware and changes no behaviour; 9b
-waits for an owner decision.
+**Phase 9 is done** (see the phase 9 results). The keyed IntegrityId layouts for an
+S7-1500, PLCSIM and the S7-1200 functions not listed come from s7commplus's rules, not
+from Lean-side captures; a capture of each would confirm them.
 
 **lean-s7 pin:** `lakefile.toml` pins lean-s7 `main` at `69dbcb8` until lean-s7 0.3.0
 is tagged. lean-s7 is still at 0.2.0; moving the pin waits for that release.
@@ -1206,9 +1236,9 @@ as a named parameter with evidence, and the parameter has to be chosen per peer.
 
 - **How the client picks the peer profile (9b).** A command-line option, a default per
   key family with an emulator override, or s7commplus's approach of tolerating both
-  layouts with a weaker write check. *Recommended: a default per key family that
-  follows s7commplus's hardware rules, and an explicit emulator profile for
-  `integration/run.py`.* Until then the client is correct for the emulator only.
+  layouts with a weaker write check. *Decided 2026-11-11: a default per key family that
+  follows s7commplus's hardware rules, and an explicit emulator profile
+  (`--emulator`) for `integration/run.py`.*
 - **Checking the id's value.** In a keyed session, the HMAC and the sequence number
   already bind a reply to its request, so checking the value adds little. No capture
   shows how the value relates to the request's. *Recommended: check the shape only.*
