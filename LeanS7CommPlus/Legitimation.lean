@@ -46,13 +46,32 @@ def legitimationAnswer (family : KeyFamily) (publicKey sessionKey : ByteArray) (
   pure (legitimationSeedHeader family publicKey challengeKey ++ seed ++ fragmentHeader 0 0x40 ++ full ++
     fragmentHeader 1 (key2.size % 16 + 16) ++ final ++ fragmentHeader 2 0)
 
+/-- A flags byte and a datatype byte that start a challenge value: a BLOB, or a USINT
+    array. -/
+def challengeHeader (flags datatype : UInt8) : Bool :=
+  datatype == 0x14 || (datatype == 0x02 && flags &&& 0x10 != 0)
+
+/-- Where the challenge value starts, as in s7commplus `_response_pvalue_offset`: right
+    at the cursor when a challenge header is there, else after a zero marker. A BLOB's
+    flags byte is itself `00`, so the header is checked before any marker is skipped. -/
+def challengeStart (cursor : Cursor) : Cursor :=
+  match cursor.readUInt8 with
+  | .ok (flags, afterFlags) =>
+    match afterFlags.readUInt8 with
+    | .ok (datatype, _) =>
+      if challengeHeader flags datatype then cursor
+      else if flags = 0 then afterFlags
+      else cursor
+    | .error _ => cursor
+  | .error _ => cursor
+
 /-- The challenge in a GetVarSubstreamed reply: the return value, an optional zero
     marker, then a BLOB or a USINT array. -/
 def decodeLegitimationChallenge (payload : ByteArray) : Except DecodeError ByteArray := do
   let (returnValue, cursor) ← Vlq.decodeUInt64 { data := payload }
   if returnValue ≠ 0 then
     throw (.remoteFailure 0 s!"GetVarSubstreamed failed with return value {returnValue}")
-  let cursor := if payload.get! cursor.offset = 0 then { cursor with offset := cursor.offset + 1 } else cursor
+  let cursor := challengeStart cursor
   let (flags, cursor) ← cursor.readUInt8
   let (datatype, cursor) ← cursor.readUInt8
   let cursor ← if datatype = 0x14 then pure (← Vlq.decodeUInt32 cursor).2

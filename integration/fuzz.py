@@ -19,6 +19,7 @@ from pathlib import Path
 
 from s7commplus import vlq
 from s7commplus.codec import decode_pvalue_to_bytes, encode_pvalue_typed
+from s7commplus.connection import _parse_get_var_substreamed_response
 from s7commplus.protocol import DataType
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +31,7 @@ PYTHON = {
     "i32": vlq.decode_int32_vlq,
     "i64": vlq.decode_int64_vlq,
     "pvalue": lambda data, offset: (lambda r: (r[0].hex(), r[1]))(decode_pvalue_to_bytes(data, offset)),
+    "challenge": lambda data, offset: (_parse_get_var_substreamed_response(data).hex(), 0),
 }
 
 
@@ -68,6 +70,14 @@ def seeds() -> list[tuple[str, bytes]]:
     ]
     for datatype, data in typed:
         out.append(("pvalue", encode_pvalue_typed(datatype, data)))
+    # GetVarSubstreamed replies carrying a legitimation challenge: return value 0, an
+    # optional zero marker, then a BLOB (flags 00, so it looks like a marker) or a
+    # USINT array.
+    challenge = bytes(range(1, 21)).hex()
+    for hexed in ["0000001400" + "14" + challenge, "00001400" + "14" + challenge,
+                  "00001402" + "14" + challenge, "00001002" + "14" + challenge,
+                  "001002" + "14" + challenge]:
+        out.append(("challenge", bytes.fromhex(hexed)))
     return out
 
 
