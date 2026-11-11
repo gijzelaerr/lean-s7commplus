@@ -224,4 +224,81 @@ theorem decodeSecurityKey_encode (key : SecurityKey) (hblob : key.blob.size < 2 
   simp [SecurityKey.encode, ByteArray.size_append, structHeader, bytes_size, uint32BE_size]
   omega
 
+/-! ## Canonical form of the SecurityKey -/
+
+/-- `SecurityKey.ofItems?` accepts exactly the members `SecurityKey.items` writes. -/
+theorem SecurityKey.ofItems?_eq (items : List Item) (key : SecurityKey)
+    (h : SecurityKey.ofItems? items = some key) : items = key.items := by
+  unfold SecurityKey.ofItems? at h
+  split at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    rfl
+  · contradiction
+
+/-- Canonical form of the SecurityKey: struct 1800's header, then exactly the members
+    `SecurityKey.items` writes for the decoded key, each in an accepted form. The only
+    freedom is the VLQ fields and PValues inside. -/
+theorem decodeSecurityKey_canonical (cursor next : Cursor) (key : SecurityKey)
+    (h : decodeSecurityKey cursor = .ok (key, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧
+      ∃ members, cursor.data.extract cursor.offset next.offset =
+          structHeader StructId.securityKey ++ members ∧ ItemsForm key.items members := by
+  unfold decodeSecurityKey at h
+  split at h
+  · contradiction
+  · contradiction
+  · rename_i structId slotNext hslot
+    obtain ⟨hd1, hle1, hf1⟩ := decodeSlot_canonical _ _ _ hslot
+    simp only [SlotForm] at hf1
+    split at h
+    · contradiction
+    · rename_i hid
+      have hid : structId = StructId.securityKey := by simpa using hid
+      split at h
+      · contradiction
+      · rename_i items after hitems
+        obtain ⟨hd2, hle2, -, hf2⟩ := decodeItems_canonical _ _ _ _ _ hitems
+        split at h
+        · rename_i decoded hdecoded
+          simp only [Except.ok.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          rw [hd1] at hf2
+          refine ⟨by rw [hd2, hd1], by omega, _, ?_, by rw [← SecurityKey.ofItems?_eq _ _ hdecoded]; exact hf2⟩
+          rw [← hid, ← hf1, ByteArray.extract_append_extract_of_le _ hle1 hle2]
+        · contradiction
+
+/-- What `parseFingerprint` accepts: 19 characters with `:` third, a two-digit hex
+    family that names a key family, and a hex key id. The key id comes back upper-cased,
+    so the parse is lossy in the letter case only. -/
+theorem parseFingerprint_spec (fingerprint : String) (family : KeyFamily) (keyId : String)
+    (h : parseFingerprint fingerprint = some (family, keyId)) :
+    fingerprint.toList.length = 19 ∧ fingerprint.toList[2]? = some ':' ∧
+      keyId = String.ofList ((fingerprint.toList.drop 3).map Char.toUpper) ∧
+      (hexToBytes? keyId).isSome ∧
+      ∃ familyBytes, hexToBytes? (String.ofList (fingerprint.toList.take 2)) = some familyBytes ∧
+        KeyFamily.ofByte? (familyBytes.get! 0) = some family := by
+  unfold parseFingerprint at h
+  simp only [bind, Option.bind, pure] at h
+  rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hshape, h⟩
+  · contradiction
+  · have hlen : fingerprint.toList.length = 19 :=
+      Classical.byContradiction fun hne => hshape (Or.inl hne)
+    have hcolon : fingerprint.toList[2]? = some ':' :=
+      Classical.byContradiction fun hne => hshape (Or.inr hne)
+    split at h
+    · contradiction
+    · rename_i _ familyBytes hfamilyBytes
+      simp only at h
+      split at h
+      · contradiction
+      · rename_i _ decoded hfamily
+        simp only at h
+        split at h
+        · contradiction
+        · rename_i _ hexBytes hkey
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact ⟨hlen, hcolon, rfl, by rw [hkey]; rfl, familyBytes, hfamilyBytes, hfamily⟩
+
 end LeanS7CommPlus

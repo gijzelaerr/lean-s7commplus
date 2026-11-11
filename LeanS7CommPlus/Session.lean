@@ -420,4 +420,61 @@ theorem Session.ready_only_after_setup (session : Session) (request : Request) :
       ∃ version securityKey, request = .setupSessionKey version securityKey := by
   cases request <;> simp [Phase.after]
 
+/-! ## What the CreateObject reply decoder accepts
+
+`decodeCreateObjectReply` is lossy: it keeps the first object id, three attributes of
+the tree and the return value, and it ignores the bytes after the tree. So its theorem
+characterises the payload instead of re-encoding the reply. -/
+
+/-- An accepted CreateObject reply payload starts with a return value in any 64-bit
+    VLQ form, a nonzero count, that many object ids in any 32-bit form, the first being
+    the session id, and a well-nested object tree in an accepted form. The tree carries
+    the ServerSessionVersion, fingerprint and challenge the reply reports. Whatever
+    follows the tree (`payload` from `consumed` on) is not read. -/
+theorem decodeCreateObjectReply_canonical (payload : ByteArray) (reply : CreateObjectReply)
+    (h : decodeCreateObjectReply payload = .ok reply) :
+    ∃ consumed returnBytes count ids idsBytes items treeBytes,
+      payload.extract 0 consumed = returnBytes ++ bytes #[count] ++ idsBytes ++ treeBytes ∧
+      Vlq.UInt64Form reply.returnValue returnBytes ∧ count ≠ 0 ∧ ids.length = count.toNat ∧
+      VlqListForm ids idsBytes ∧ ids.head? = some reply.sessionId ∧
+      Closes [] items ∧ ItemsForm items treeBytes ∧
+      attributeBytes AttributeId.serverSessionVersion items = some reply.serverSessionVersion ∧
+      reply.fingerprint = findFingerprint items ∧ reply.challenge = findChallenge items := by
+  simp only [decodeCreateObjectReply, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r1 h1
+    obtain ⟨hd1, hle1, hf1⟩ := Vlq.decodeUInt64_form _ _ _ h1
+    split at h
+    · contradiction
+    · rename_i _ r2 h2
+      obtain ⟨-, hx2, hn2⟩ := readUInt8_extract _ _ _ h2
+      rcases ite_eq_cases h with ⟨-, h⟩ | ⟨hcount, h⟩
+      · simp [throw, throwThe, MonadExceptOf.throw] at h
+      · split at h
+        · contradiction
+        · rename_i _ r3 h3
+          rw [hn2] at h3
+          obtain ⟨hd3, hle3, hlen3, hf3⟩ := decodeVlqList_canonical _ _ _ _ h3
+          simp only at hd3 hle3 hf3
+          split at h
+          · contradiction
+          · rename_i _ r4 h4
+            obtain ⟨hd4, hle4, hc4, hf4⟩ := decodeTree_canonical _ _ _ h4
+            rw [hd3, hd1] at hf4
+            split at h
+            · rename_i sessionId hsession
+              split at h
+              · rename_i version hversion
+                simp only [pure, Except.pure, Except.ok.injEq] at h
+                subst h
+                rw [hd1] at hx2 hd3 hf3
+                refine ⟨r4.snd.offset, _, r2.fst, r3.fst, _, r4.fst, _, ?_, hf1, hcount, hlen3, hf3,
+                  hsession, hc4, hf4, hversion, rfl, rfl⟩
+                rw [hx2, ByteArray.extract_append_extract_of_le _ (by omega) (by omega),
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle3,
+                  ByteArray.extract_append_extract_of_le _ (by omega) hle4]
+              · simp [throw, throwThe, MonadExceptOf.throw] at h
+            · simp [throw, throwThe, MonadExceptOf.throw] at h
+
 end LeanS7CommPlus

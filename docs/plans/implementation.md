@@ -5,8 +5,52 @@ HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of s
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
 PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
 for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ),
-8b (PValues) and 8c (trees) are done, 8d–8f are not started. Decision 1 is
-provisional (lean-s7 pinned to a commit). The other decisions are open.
+8b (PValues), 8c (trees) and 8d (session payloads) are done, 8e and 8f are not
+started. Decision 1 is provisional (lean-s7 pinned to a commit). The other
+decisions are open.
+
+## Phase 8d results (session payloads)
+
+**One decoder changed, as a separate commit.** `decodeLegitimationChallenge` skipped
+any zero byte after the return value as the optional marker, and read it with the
+panicking `payload.get!`. But a scalar BLOB's flags byte is itself `00`:
+- a BLOB challenge without the marker (`00 | 00 14 00 14 …`) was refused;
+- a BLOB whose root id is 2 was misread as a USINT array.
+
+`challengeStart` now follows s7commplus `_response_pvalue_offset`: the value starts at
+the cursor when a challenge header (a BLOB, or a USINT array) is there, else after a
+zero marker. It reads with the bounded cursor. `testChallengeMarker` covers both forms
+with and without the marker; the old decoder fails it. `integration/fuzz.py` gained a
+`challenge` kind against `_parse_get_var_substreamed_response`: 305 inputs,
+accept-different 0, no Lean-only rejections.
+
+The theorems:
+
+- **`decodeVlqList_canonical`** (`VlqListForm`), moved here from 8e because the
+  CreateObject reply needs it.
+- **`decodeSecurityKey_canonical`**: struct 1800's header and exactly the members
+  `SecurityKey.items` writes for the decoded key, each in an accepted form
+  (`SecurityKey.ofItems?_eq`).
+- **`decodeCreateObjectReply_canonical`**: the decoder keeps the first object id, the
+  ServerSessionVersion, fingerprint and challenge attributes and the return value, and
+  ignores the bytes after the tree, so the theorem characterises the payload instead
+  of re-encoding the reply. The payload starts with:
+  - a return value in any 64-bit form;
+  - a nonzero count, then that many ids, the first being the session id;
+  - a well-nested tree in an accepted form, which carries what the reply reports.
+- **`decodeLegitimationChallenge_canonical`**: the payload starts with:
+  - a zero return value in any 64-bit form;
+  - an optional zero marker;
+  - a flags and a datatype byte;
+  - a BLOB root id in any form, or nothing for a USINT array with flag `0x10`;
+  - a length in any form and exactly that many challenge bytes.
+- **`parseFingerprint_spec`**: 19 characters with `:` third, a hex family byte that
+  names a key family, and a hex key id, returned upper-cased.
+
+No encoders were added. The plan expected them for the two whole-payload decoders, but
+both turned out to be lossy, so a characterisation says more than a re-encoding could.
+Both theorems state what the payload starts with, `payload.extract 0 consumed`,
+because the decoders don't read their trailing bytes.
 
 ## Phase 8c results (object trees)
 
@@ -933,15 +977,16 @@ theorem characterises the input instead of re-encoding it).
 | `Vlq.decodeInt64` | yes | yes (8a) | lenient: sign-group padding, plus the nine-byte form with width 2⁶⁴ | done |
 | `decodeBytes`, `decodePValue`, `decodePValueBody` | yes | yes (8b) | strict flags byte (must be 0); `real` and `lreal` are kept as raw bits, so no float loss. Lenient only through the VLQ fields: `udint`, `aid`, `dint`, `ulint`, `lint`, `timespan`, the BLOB root and the BLOB/WSTRING lengths | done |
 | `decodeValue`, `decodeArray`, `decodeSlot`, `decodeItem`, `decodeItems`, `decodeTree` | yes | yes (8c) | lenient through PValue and VLQ only; the stack adds none (`Closes`), and the fuel bound only rejects | done |
-| `decodeSecurityKey` | yes | no | through the tree codec; to classify | 8d |
-| `decodeCreateObjectReply` | **no** | no | to classify: it reads the return value, the object ids and the tree, then picks out the fingerprint and the challenge. Re-encodable or lossy depends on what `CreateObjectReply` keeps | 8d |
-| `decodeLegitimationChallenge` | **no** | no | lenient: one optional zero byte after the return value is skipped. Rejects a non-zero return value | 8d |
-| `decodeItemAddress`, `decodeAddresses`, `decodeVlqList` | yes | no | lenient through VLQ | 8e |
+| `decodeSecurityKey` | yes | yes (8d) | lenient through the tree codec only: struct 1800 and exactly the members of `SecurityKey.items` | done |
+| `decodeCreateObjectReply` | no | characterised (8d) | lossy: keeps the first object id and three attributes, ignores the bytes after the tree | done |
+| `decodeLegitimationChallenge` | no | characterised (8d) | lossy: an optional zero marker, a BLOB root that is discarded, a BLOB flags byte that is not checked, and ignored trailing bytes. Rejects a non-zero return value. Fixed in 8d (see below) | done |
+| `decodeVlqList` | yes | yes (8d) | lenient through VLQ | done |
+| `decodeItemAddress`, `decodeAddresses` | yes | no | lenient through VLQ | 8e |
 | `decodeObjectQualifier` | yes | no | strict prefix; the fixed form is strict, and the VLQ form inherits VLQ leniency and needs a zero terminator | 8e |
 | `decodeReadRequest`, `decodeReadRequestBody`, `decodeReadReply`, `decodeValueList`, `decodeErrorList` | yes | no | through the above; the reply lists run to the end of the payload | 8e |
 | `decodeLeadingIntegrityId`, `decodeTrailingIntegrityId` | yes | no | lenient through VLQ; the trailing form requires exactly `tail` zero bytes | 8e |
 | `decodeWriteRequest`, `decodeWriteRequestBody`, `decodeNumberedValues`, `decodeWriteReply` | yes | no | through the above; the fill must be zero | 8f |
-| `parseFingerprint` | no | no | lossy and not a wire decoder: it parses a string and upper-cases the key id. Characterise (accepted shape, upper-case output), don't re-encode | 8d |
+| `parseFingerprint` | no | characterised (8d) | lossy and not a wire decoder: it parses a string and upper-cases the key id | done |
 | `Client.decodeName` | no | no | lossy display helper for browse results (`Char.ofNat` maps invalid code points). Out of scope | — |
 | `findFingerprint`, `findChallenge`, `attributeBytes` | — | — | projections over a decoded tree, not decoders. Out of scope | — |
 

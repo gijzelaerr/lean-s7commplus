@@ -114,6 +114,14 @@ Implemented and proved so far:
   session with the password `secret`, the Lean setup (with a Lean-built blob),
   challenge read and answer frames equal Python's byte for byte. `--password PW`
   legitimates a session.
+- **Session payloads, characterised** (phase 8d). `decodeSecurityKey_canonical`: an
+  accepted SecurityKey is struct 1800's header and exactly the members
+  `SecurityKey.items` writes, each in an accepted form. The CreateObject reply and the
+  legitimation challenge decoders are lossy (they keep a few fields and ignore what
+  follows), so `decodeCreateObjectReply_canonical` and
+  `decodeLegitimationChallenge_canonical` describe the payloads they accept instead of
+  re-encoding them. `parseFingerprint_spec`: the fingerprint shape, with the key id
+  upper-cased.
 - **Key renewal** (`Client.renewSessionKey`, `Keyed.finishRenewal`): a new SecurityKey
   written with SetVariable under the old key. `Keyed.finishRenewal_spec` and
   `Keyed.finishRenewal_unopened`: the new key is installed only once the reply opens

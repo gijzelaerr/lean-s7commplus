@@ -8,6 +8,8 @@ in the Python reference's representation:
 - `u32`, `u64`, `i32`, `i64`: a VLQ, as a decimal number;
 - `pvalue`: a scalar PValue, as the hex of the bytes `decode_pvalue_to_bytes` returns
   (VLQ integers re-packed to their fixed width, BLOB and WSTRING as their bytes).
+- `challenge`: a GetVarSubstreamed reply payload, as the hex of the challenge
+  `_parse_get_var_substreamed_response` returns; CONSUMED is always 0.
 -/
 
 open LeanS7 LeanS7CommPlus
@@ -52,6 +54,7 @@ def decodeLine (kind : String) (data : ByteArray) : String :=
     | "i32" => (Vlq.decodeInt32 cursor).map fun (v, c) => (toString v.toInt, c.offset)
     | "i64" => (Vlq.decodeInt64 cursor).map fun (v, c) => (toString v.toInt, c.offset)
     | "pvalue" => (decodePValue cursor).map fun (v, c) => (toHex (pythonRaw v), c.offset)
+    | "challenge" => (decodeLegitimationChallenge data).map fun challenge => (toHex challenge, 0)
     | _ => .error (.invalidField 0 "unknown kind")
   match result with
   | .ok (value, consumed) => s!"ok {value} {consumed}"

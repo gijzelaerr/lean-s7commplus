@@ -1004,6 +1004,32 @@ def legitimationDraws : List String := ["0708090a0b0c0d0e0f101112131415161718191
 /-- `hashlib.sha1` of the bytes `(7i + 3) mod 256`, 1000 of them. -/
 def sha1Vector : String := "4231a8a50a10fa9758db8ec71fdef855b751048a"
 
+/-- The challenge value of a GetVarSubstreamed reply, with and without the zero marker.
+    A BLOB's flags byte is itself 00, so the header is checked before a marker is
+    skipped, as in s7commplus `_response_pvalue_offset`. -/
+def testChallengeMarker : IO Unit := do
+  let challenge := hexBytes "0102030405060708090a0b0c0d0e0f1011121314"
+  let decode (hex : String) := (decodeLegitimationChallenge (hexBytes hex)).toOption
+  -- return value 0, marker, BLOB (flags 00, datatype 14, root 00, length 20)
+  check (decode ("0000" ++ "0014" ++ "00" ++ "14" ++ toHex challenge) == some challenge)
+    "BLOB challenge after a zero marker"
+  -- the same BLOB without the marker: refused before, the flags byte was taken as the marker
+  check (decode ("00" ++ "0014" ++ "00" ++ "14" ++ toHex challenge) == some challenge)
+    "BLOB challenge without a zero marker"
+  -- a BLOB whose root id is 02: misread as a USINT array before
+  check (decode ("00" ++ "0014" ++ "02" ++ "14" ++ toHex challenge) == some challenge)
+    "BLOB challenge with root id 2 and no marker"
+  -- USINT arrays, with and without the marker
+  check (decode ("0000" ++ "1002" ++ "14" ++ toHex challenge) == some challenge)
+    "USINT array challenge after a zero marker"
+  check (decode ("00" ++ "1002" ++ "14" ++ toHex challenge) == some challenge)
+    "USINT array challenge without a zero marker"
+  -- refused: a non-zero return value, an unsupported value, a short payload
+  check (decode ("01" ++ "0014" ++ "00" ++ "14" ++ toHex challenge) == none) "non-zero return value"
+  check (decode ("00" ++ "0004" ++ "14") == none) "a UDINT is not a challenge"
+  check (decode "00" == none) "no value"
+  check (decode "0000" == none) "a marker and no value"
+
 def testLegitimation : IO Unit := do
   check (toHex (Sha1.hash ByteArray.empty) == "da39a3ee5e6b4b0d3255bfef95601890afd80709") "SHA-1 of nothing"
   check (toHex (Sha1.hash "abc".toUTF8) == "a9993e364706816aba3e25717850c26c9cd0d89d") "SHA-1 of abc"
@@ -1135,5 +1161,6 @@ def main : IO Unit := do
   testKeyDerivation
   testBlob
   testLegitimation
+  testChallengeMarker
   testRenewal
   IO.println "All lean-s7commplus tests passed."
