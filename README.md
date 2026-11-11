@@ -80,7 +80,11 @@ Implemented and proved so far:
   by item number 0 in any VLQ form.
 - **SetMultiVariables and per-item read results** (`LeanS7CommPlus.Write`): the write
   request (addresses, values numbered from 1, qualifier, fill) and reply, with round
-  trips `decodeWriteRequest_encode` and `decodeWriteReply_encode`. `ReadReply.results`
+  trips `decodeWriteRequest_encode` and `decodeWriteReply_encode`.
+  `decodeWriteRequest_canonical`: an accepted request payload is exactly an accepted
+  body (values numbered from 1, each number in any VLQ form, then a single `00` byte),
+  the IntegrityId when one is expected, and four zero fill bytes.
+  `decodeWriteReply_canonical`: a return value and an error list. `ReadReply.results`
   turns a read reply into one value or error per requested item, and
   `ReadReply.results_spec` proves it sound: one result per item, a value only from the
   value list with no error for that item, an error only from the error list.
