@@ -4,9 +4,34 @@ Status: phases 0–5 done on 2026-10-29. Decision 3 takes option (a) for SHA-256
 HMAC-SHA256 (pure Lean, checked against `hashlib`); TLS (phase 6) stays out of scope.
 Phase 7, the V1 SessionKey handshake for families 00 and 01, is done (7a–7e); 7f,
 PLCSIM's family 03, is optional and waits for the owner. Phase 8, canonical decoding
-for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ)
-and 8b (PValues) are done, 8c–8f are not started. Decision 1 is provisional
-(lean-s7 pinned to a commit). The other decisions are open.
+for the decoders that predate that rule, is planned (2026-11-11); 8a (64-bit VLQ),
+8b (PValues) and 8c (trees) are done, 8d–8f are not started. Decision 1 is
+provisional (lean-s7 pinned to a commit). The other decisions are open.
+
+## Phase 8c results (object trees)
+
+No decoder changed. The tree decoders add no freedom of their own; what they accept
+beyond the encoder's output comes only from VLQ fields and PValues.
+
+- **`Value.Form`**: a scalar is flags `0x00`, its datatype and a `BodyForm` body; an
+  array is flags `0x10`, the element datatype, the element count in any 32-bit VLQ form
+  and exactly that many elements of a supported fixed size. **`decodeArray_canonical`**
+  and **`decodeValue_canonical`**. `decodeArray` itself does not check its flags byte;
+  `decodeValue` only calls it after reading `0x10` there, so the theorem for
+  `decodeValue` is exact.
+- **`SlotForm`** and **`decodeSlot_canonical`**: a struct header (`00 17` and a
+  big-endian id) or a value.
+- **`Item.Form`** and **`decodeItem_canonical`**: for each item kind, the tag byte and
+  the big-endian fields are exact and each VLQ field takes any 32-bit form. A struct
+  member's key may be padded (`80 05` is key 5), but a key that decodes to 0 is
+  rejected: the decoder reads the key from the first byte on and checks it.
+- **`ItemsForm`**, **`decodeItems_canonical`** and **`decodeTree_canonical`**: an
+  accepted tree is a sequence that `Closes []` (every item is allowed where it stands
+  and the last one closes the outermost object), and its bytes are the items' forms
+  back to back. By induction on the fuel; no loop invariant beyond the stack was
+  needed, because `decodeItems` recurses structurally.
+- **`Value.form_encode`**, **`Item.form_encode`** and **`itemsForm_encodeItems`**: the
+  encoder's bytes are one of those forms.
 
 ## Phase 8b results (PValues)
 
@@ -907,7 +932,7 @@ theorem characterises the input instead of re-encoding it).
 | `Vlq.decodeUInt64` | yes | yes (8a) | lenient: leading `0x80` groups, and a nine-byte form for every value. After eight continuation groups the ninth byte counts all 8 bits, so any value below 2⁶⁴ is also eight groups carrying its top 56 bits followed by its low byte. `encodeUInt64` uses that form only from 2⁵⁶ up; below that, both forms are accepted (e.g. `80 80 80 80 80 80 80 80 05` decodes to 5) | done |
 | `Vlq.decodeInt64` | yes | yes (8a) | lenient: sign-group padding, plus the nine-byte form with width 2⁶⁴ | done |
 | `decodeBytes`, `decodePValue`, `decodePValueBody` | yes | yes (8b) | strict flags byte (must be 0); `real` and `lreal` are kept as raw bits, so no float loss. Lenient only through the VLQ fields: `udint`, `aid`, `dint`, `ulint`, `lint`, `timespan`, the BLOB root and the BLOB/WSTRING lengths | done |
-| `decodeValue`, `decodeArray`, `decodeItem`, `decodeItems`, `decodeTree` | yes | no | lenient through PValue and VLQ; the stack and the fuel bound may add more (to classify) | 8c |
+| `decodeValue`, `decodeArray`, `decodeSlot`, `decodeItem`, `decodeItems`, `decodeTree` | yes | yes (8c) | lenient through PValue and VLQ only; the stack adds none (`Closes`), and the fuel bound only rejects | done |
 | `decodeSecurityKey` | yes | no | through the tree codec; to classify | 8d |
 | `decodeCreateObjectReply` | **no** | no | to classify: it reads the return value, the object ids and the tree, then picks out the fingerprint and the challenge. Re-encodable or lossy depends on what `CreateObjectReply` keeps | 8d |
 | `decodeLegitimationChallenge` | **no** | no | lenient: one optional zero byte after the return value is skipped. Rejects a non-zero return value | 8d |

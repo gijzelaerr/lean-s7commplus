@@ -142,4 +142,16 @@ theorem Except.map_eq_ok {ε α β : Type} {f : α → β} {e : Except ε α} {b
   | error _ => simp [Except.map] at h
   | ok a => exact ⟨a, rfl, by simpa [Except.map] using h⟩
 
+/-- Peel one `let (x, c) ← e` off a successful `do` block. -/
+theorem Except.bind_eq_ok {ε α β : Type} {e : Except ε α} {f : α → Except ε β} {b : β}
+    (h : (e >>= f) = .ok b) : ∃ a, e = .ok a ∧ f a = .ok b := by
+  cases e with
+  | error _ => simp [bind, Except.bind] at h
+  | ok a => exact ⟨a, rfl, h⟩
+
+theorem extract_self (data : ByteArray) (position : Nat) :
+    data.extract position position = ByteArray.empty := by
+  apply ByteArray.ext
+  simp
+
 end LeanS7CommPlus
