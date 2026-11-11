@@ -3,12 +3,12 @@ version = "0.0.0"
 defaultTargets = ["LeanS7CommPlus"]
 
 # lean-s7 provides the byte cursor, big-endian codecs, TPKT/COTP and the
-# reverse-read and ByteArray.extract lemmas. Pinned to a main commit until
-# lean-s7 0.3.0 is released; then this moves to the tag.
+# reverse-read and ByteArray.extract lemmas. Pinned to the lean-s7 0.3.0 release;
+# lake-manifest.json records its commit.
 [[require]]
 name = "lean-s7"
 git = "https://github.com/gijzelaerr/lean-s7"
-rev = "69dbcb80c2e46dbd5ae75b7883c6a5df0894262f"
+rev = "v0.3.0"
 
 [[lean_lib]]
 name = "LeanS7CommPlus"
