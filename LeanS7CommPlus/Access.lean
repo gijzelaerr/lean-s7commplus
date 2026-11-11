@@ -567,4 +567,37 @@ theorem decodeReadReply_encode (reply : ReadReply) (hfit : reply.Fits) (pre suff
   rw [r2]
   simp only [pure, Except.pure, Nat.add_assoc]
 
+/-! ## Canonical form -/
+
+/-- A list of 32-bit VLQs, each in an accepted form, back to back. -/
+def VlqListForm : List UInt32 → ByteArray → Prop
+  | [], input => input = ByteArray.empty
+  | value :: rest, input => ∃ first others, input = first ++ others ∧
+      Vlq.UInt32Form value first ∧ VlqListForm rest others
+
+theorem decodeVlqList_canonical (count : Nat) (cursor next : Cursor) (values : List UInt32)
+    (h : decodeVlqList count cursor = .ok (values, next)) :
+    next.data = cursor.data ∧ cursor.offset ≤ next.offset ∧ values.length = count ∧
+      VlqListForm values (cursor.data.extract cursor.offset next.offset) := by
+  induction count generalizing cursor next values with
+  | zero =>
+    simp only [decodeVlqList, Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    exact ⟨rfl, Nat.le_refl _, rfl, extract_self _ _⟩
+  | succ count ih =>
+    simp only [decodeVlqList, bind, Except.bind] at h
+    split at h
+    · contradiction
+    · rename_i _ r1 h1
+      obtain ⟨hd1, hle1, hf1⟩ := Vlq.decodeUInt32_form _ _ _ h1
+      split at h
+      · contradiction
+      · rename_i _ r2 h2
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        obtain ⟨hd2, hle2, hlen, hf2⟩ := ih _ _ _ h2
+        rw [hd1] at hf2
+        exact ⟨by rw [hd2, hd1], by omega, by simp [hlen], _, _,
+          (ByteArray.extract_append_extract_of_le _ hle1 hle2).symm, hf1, hf2⟩
+
 end LeanS7CommPlus
