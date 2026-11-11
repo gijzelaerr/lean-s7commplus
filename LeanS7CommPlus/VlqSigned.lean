@@ -286,23 +286,6 @@ theorem decodeInt64_encodeInt64 (value : Int64) (pre suffix : ByteArray) :
 
 /-! ## Canonical form: the only freedom is the number of groups -/
 
-theorem foldl_lt (gs : List Nat) (hlt : ∀ group ∈ gs, group < 128) :
-    gs.foldl (fun accumulator group => accumulator * 128 + group) 0 < 128 ^ gs.length := by
-  obtain ⟨l, rfl⟩ : ∃ l : List Nat, gs = l.reverse := ⟨gs.reverse, by simp⟩
-  induction l with
-  | nil => simp
-  | cons last init ih =>
-    simp only [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil,
-      List.length_append, List.length_reverse, List.length_cons, List.length_nil] at hlt ⊢
-    have hl := hlt last (by simp)
-    have hi := ih (fun g hg => hlt g (by simp [hg]))
-    rw [List.length_reverse] at hi
-    rw [Nat.pow_succ]
-    generalize 128 ^ init.length = power at hi ⊢
-    generalize init.reverse.foldl (fun accumulator group => accumulator * 128 + group) 0 = folded at hi ⊢
-    have : (folded + 1) * 128 ≤ power * 128 := Nat.mul_le_mul_right 128 hi
-    omega
-
 theorem groupsN_foldl (gs : List Nat) (hlt : ∀ group ∈ gs, group < 128) :
     (groupsN gs.length (gs.foldl (fun accumulator group => accumulator * 128 + group) 0)).reverse =
       gs := by
@@ -360,5 +343,160 @@ theorem decodeInt32_canonical (cursor next : Cursor) (value : Int32)
       unfold encodeSignedGroups
       rw [hval, signedOf_emod _ _ (foldl_lt gs hgs), groupsN_foldl gs hgs]
     · simp [throw, throwThe, MonadExceptOf.throw] at h
+
+/-- The decoder accepts `count` groups of a value's pattern for any `count` up to five
+    that leaves room for the sign, not only the encoder's choice. -/
+theorem decodeInt32_encodeSignedGroups (count : Nat) (value : Int32) (hcount : 1 ≤ count)
+    (hle : count ≤ 5) (hfit : value.toInt.natAbs < 64 * 128 ^ (count - 1)) (pre suffix : ByteArray) :
+    decodeInt32 { data := pre ++ (encodeSignedGroups count value.toInt ++ suffix), offset := pre.size } =
+      .ok (value,
+        { data := pre ++ (encodeSignedGroups count value.toInt ++ suffix),
+          offset := pre.size + count }) := by
+  have hlow := value.le_toInt
+  have hhigh := value.toInt_lt
+  unfold decodeInt32
+  rw [readGroups_encodeSignedGroups count 5 value.toInt hcount hle]
+  simp only [bind, Except.bind, show pre.size + count - pre.size = count by omega,
+    signedOf_pattern count value.toInt hfit hcount]
+  rw [if_pos ⟨hlow, hhigh⟩]
+  simp [pure, Except.pure, Int32.ofInt_toInt]
+
+/-! ## Canonical form of the signed 64-bit VLQ
+
+As for the unsigned type, there is a short form, `count` groups of the two's-complement
+pattern for one to eight groups, and a long nine-byte form whose ninth byte carries all
+eight bits of a 64-bit pattern. The encoder uses the long form only for magnitudes of
+2^55 and above; the decoder accepts it for every value. -/
+
+/-- The nine-byte form of a signed 64-bit VLQ: eight continuation groups and a full
+    byte, holding the 64-bit two's-complement pattern. -/
+def encodeInt64Long (value : Int64) : ByteArray :=
+  let pattern := (value.toInt % (2 ^ 64 : Nat)).toNat
+  ((groupsN 8 (pattern / 256)).reverse.map (fun group => UInt8.ofNat (group + 128)) ++
+    [UInt8.ofNat (pattern % 256)]).toByteArray
+
+/-- The encoder's long form is `encodeInt64Long`. -/
+theorem encodeInt64_of_le (value : Int64) (h : 2 ^ 55 ≤ value.toInt.natAbs) :
+    encodeInt64 value = encodeInt64Long value := by
+  simp [encodeInt64, encodeInt64Long, show ¬ value.toInt.natAbs < 2 ^ 55 by omega]
+
+/-- Canonical form of a signed 64-bit VLQ. The bytes the decoder accepts are either the
+    `count`-group two's-complement pattern of the decoded value, for one to eight groups,
+    or the nine-byte form `encodeInt64Long`. Nothing else. -/
+theorem decodeInt64_canonical (cursor next : Cursor) (value : Int64)
+    (h : decodeInt64 cursor = .ok (value, next)) :
+    next.data = cursor.data ∧
+      ((∃ count, 1 ≤ count ∧ count ≤ 8 ∧ next.offset = cursor.offset + count ∧
+          cursor.data.extract cursor.offset next.offset = encodeSignedGroups count value.toInt) ∨
+        (next.offset = cursor.offset + 9 ∧
+          cursor.data.extract cursor.offset next.offset = encodeInt64Long value)) := by
+  simp only [decodeInt64, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i read result hread
+    obtain ⟨hdata, hcases⟩ := readGroupsThenByte_bytes _ _ _ _ _ hread
+    rcases hcases with ⟨gs, hne, hgs, hlen, hoff, hext, hval⟩ |
+        ⟨gs, last, hgs, hlen, hoff, hext, hval⟩
+    · simp only [hoff, Nat.add_sub_cancel_left, show gs.length ≠ 9 by omega, if_false] at h
+      split at h
+      · rename_i hrange
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        have hpos : 1 ≤ gs.length := by
+          cases gs with
+          | nil => exact absurd rfl hne
+          | cons _ _ => simp
+        refine ⟨hdata, Or.inl ⟨gs.length, hpos, hlen, hoff, ?_⟩⟩
+        rw [Int64.toInt_ofInt_of_le hrange.1 hrange.2, hext]
+        unfold encodeSignedGroups
+        rw [hval, signedOf_emod _ _ (foldl_lt gs hgs), groupsN_foldl gs hgs]
+      · simp [throw, throwThe, MonadExceptOf.throw] at h
+    · simp only [hoff, show cursor.offset + 8 + 1 - cursor.offset = 9 by omega, if_true] at h
+      split at h
+      · rename_i hrange
+        simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        refine ⟨hdata, Or.inr ⟨by omega, ?_⟩⟩
+        have hfold := foldl_lt gs hgs
+        rw [hlen] at hfold
+        have hlast := last.toNat_lt
+        have hu : result.fst < 2 ^ 64 := by rw [hval]; omega
+        have hdiv : result.fst / 256 =
+            gs.foldl (fun accumulator group => accumulator * 128 + group) 0 := by
+          rw [hval]; omega
+        have hmod : result.fst % 256 = last.toNat := by
+          rw [hval]; omega
+        rw [hext]
+        unfold encodeInt64Long
+        simp only [Int64.toInt_ofInt_of_le hrange.1 hrange.2, signedOf_emod _ _ hu]
+        rw [hdiv, hmod, UInt8.ofNat_toNat, ← hlen, groupsN_foldl gs hgs]
+      · simp [throw, throwThe, MonadExceptOf.throw] at h
+
+/-- The decoder accepts the short form with any number of groups up to eight that
+    leaves room for the sign. -/
+theorem decodeInt64_encodeSignedGroups (count : Nat) (value : Int64) (hcount : 1 ≤ count)
+    (hle : count ≤ 8) (hfit : value.toInt.natAbs < 64 * 128 ^ (count - 1)) (pre suffix : ByteArray) :
+    decodeInt64 { data := pre ++ (encodeSignedGroups count value.toInt ++ suffix), offset := pre.size } =
+      .ok (value,
+        { data := pre ++ (encodeSignedGroups count value.toInt ++ suffix),
+          offset := pre.size + count }) := by
+  have hlow := value.le_toInt
+  have hhigh := value.toInt_lt
+  unfold decodeInt64
+  have hread := readGroupsThenByte_encodeGroups
+    (groupsN count (value.toInt % (128 ^ count : Nat)).toNat).reverse
+    (by
+      obtain ⟨rest, hrest⟩ : ∃ rest, count = rest + 1 := ⟨count - 1, by omega⟩
+      subst hrest
+      simp [groupsN])
+    (fun g hg => groupsN_lt _ _ g (by simpa using hg)) 8 0
+    (by simp [groupsN_length]; omega) pre suffix
+  rw [foldl_groupsN, Nat.mod_eq_of_lt (pattern_lt count value.toInt)] at hread
+  simp only [List.length_reverse, groupsN_length] at hread
+  rw [show encodeSignedGroups count value.toInt =
+    (encodeGroups (groupsN count (value.toInt % (128 ^ count : Nat)).toNat).reverse).toByteArray
+    from rfl, hread]
+  simp only [bind, Except.bind, show pre.size + count - pre.size = count by omega,
+    show count ≠ 9 by omega, if_false, signedOf_pattern count value.toInt hfit hcount]
+  rw [if_pos ⟨hlow, hhigh⟩]
+  simp [pure, Except.pure, Int64.ofInt_toInt]
+
+/-- The decoder accepts the long form of every value, not only for magnitudes of 2^55
+    and above. -/
+theorem decodeInt64_encodeInt64Long (value : Int64) (pre suffix : ByteArray) :
+    decodeInt64 { data := pre ++ (encodeInt64Long value ++ suffix), offset := pre.size } =
+      .ok (value,
+        { data := pre ++ (encodeInt64Long value ++ suffix),
+          offset := pre.size + (encodeInt64Long value).size }) := by
+  have hlow := value.le_toInt
+  have hhigh := value.toInt_lt
+  unfold decodeInt64
+  have hp64 : (value.toInt % (2 ^ 64 : Nat)).toNat < 2 ^ 64 := by
+    have := Int.emod_lt_of_pos value.toInt (show (0 : Int) < (2 ^ 64 : Nat) by decide)
+    have := Int.emod_nonneg value.toInt (show ((2 ^ 64 : Nat) : Int) ≠ 0 by decide)
+    generalize value.toInt % (2 ^ 64 : Nat) = residue at *
+    omega
+  have hread := readGroupsThenByte_continued
+    (groupsN 8 ((value.toInt % (2 ^ 64 : Nat)).toNat / 256)).reverse
+    (fun g hg => groupsN_lt _ _ g (by simpa using hg)) 0
+    (UInt8.ofNat ((value.toInt % (2 ^ 64 : Nat)).toNat % 256)) pre suffix
+  simp only [List.length_reverse, groupsN_length, foldl_groupsN] at hread
+  have hvalue : (value.toInt % (2 ^ 64 : Nat)).toNat / 256 % 128 ^ 8 * 256 +
+      (UInt8.ofNat ((value.toInt % (2 ^ 64 : Nat)).toNat % 256)).toNat =
+        (value.toInt % (2 ^ 64 : Nat)).toNat := by
+    rw [UInt8.toNat_ofNat']
+    generalize (value.toInt % (2 ^ 64 : Nat)).toNat = pattern at hp64 ⊢
+    omega
+  rw [hvalue] at hread
+  have hsize : (encodeInt64Long value).size = 9 := by
+    simp [encodeInt64Long, groupsN_length]
+  rw [hsize, show encodeInt64Long value =
+    ((groupsN 8 ((value.toInt % (2 ^ 64 : Nat)).toNat / 256)).reverse.map
+      (fun group => UInt8.ofNat (group + 128)) ++
+      [UInt8.ofNat ((value.toInt % (2 ^ 64 : Nat)).toNat % 256)]).toByteArray from rfl, hread]
+  simp only [bind, Except.bind, show pre.size + 8 + 1 - pre.size = 9 by omega, if_true,
+    signedOf_pattern64 value.toInt hlow hhigh]
+  rw [if_pos ⟨hlow, hhigh⟩]
+  simp only [pure, Except.pure, Int64.ofInt_toInt]
 
 end LeanS7CommPlus.Vlq
