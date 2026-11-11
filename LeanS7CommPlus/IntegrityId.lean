@@ -220,4 +220,60 @@ theorem decodeTrailingIntegrityId_encode (id : UInt32) (body : ByteArray) (tail 
   exact ByteArray.extract_append_eq_right (by simp [ByteArray.size_append])
     (by simp [ByteArray.size_append])
 
+/-! ## Canonical form of the IntegrityId decoders -/
+
+/-- A 32-bit VLQ read stays within the input. -/
+theorem decodeUInt32_le_size (cursor next : Cursor) (value : UInt32)
+    (h : Vlq.decodeUInt32 cursor = .ok (value, next)) : next.offset ≤ cursor.data.size := by
+  simp only [Vlq.decodeUInt32, bind, Except.bind] at h
+  split at h
+  · contradiction
+  · rename_i _ r hr
+    split at h
+    · simp only [pure, Except.pure, Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      obtain ⟨-, gs, hne, -, -, hoff, hext, -⟩ := Vlq.readGroups_bytes _ _ _ _ _ hr
+      have hsize := congrArg ByteArray.size hext
+      simp only [ByteArray.size_extract, List.size_toByteArray, Vlq.encodeGroups_length] at hsize
+      have : 0 < gs.length := by
+        cases gs with
+        | nil => exact absurd rfl hne
+        | cons _ _ => simp
+      omega
+    · simp [throw, throwThe, MonadExceptOf.throw] at h
+
+/-- Canonical form of a leading IntegrityId: the payload is the id in any 32-bit VLQ
+    form, then the rest it returns. -/
+theorem decodeLeadingIntegrityId_canonical (payload rest : ByteArray) (id : UInt32)
+    (h : decodeLeadingIntegrityId payload = .ok (id, rest)) :
+    ∃ idBytes, payload = idBytes ++ rest ∧ Vlq.UInt32Form id idBytes := by
+  unfold decodeLeadingIntegrityId at h
+  split at h
+  · contradiction
+  · rename_i decoded cursor hdecoded
+    simp only [Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    obtain ⟨-, -, hform⟩ := Vlq.decodeUInt32_form _ _ _ hdecoded
+    have hle := decodeUInt32_le_size _ _ _ hdecoded
+    exact ⟨_, ByteArray.eq_extract_append_extract payload cursor.offset hle, hform⟩
+
+/-- Canonical form of a trailing IntegrityId: from the cursor to the end, the input is
+    the id in any 32-bit VLQ form and exactly `tail` zero bytes. -/
+theorem decodeTrailingIntegrityId_canonical (tail : Nat) (cursor : Cursor) (id : UInt32)
+    (h : decodeTrailingIntegrityId tail cursor = .ok id) :
+    ∃ idBytes, cursor.data.extract cursor.offset cursor.data.size =
+        idBytes ++ ByteArray.mk (Array.replicate tail 0) ∧ Vlq.UInt32Form id idBytes := by
+  unfold decodeTrailingIntegrityId at h
+  split at h
+  · contradiction
+  · rename_i decoded next hdecoded
+    obtain ⟨hd, hle, hform⟩ := Vlq.decodeUInt32_form _ _ _ hdecoded
+    have hsize := decodeUInt32_le_size _ _ _ hdecoded
+    rcases ite_eq_cases h with ⟨hzeros, h⟩ | ⟨-, h⟩
+    · simp only [Except.ok.injEq] at h
+      subst h
+      rw [hd] at hzeros
+      exact ⟨_, by rw [← hzeros, ByteArray.extract_append_extract_of_le _ hle hsize], hform⟩
+    · contradiction
+
 end LeanS7CommPlus
